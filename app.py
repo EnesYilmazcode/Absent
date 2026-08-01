@@ -27,8 +27,10 @@ _source = os.environ.get("ABSENT_CAMERA", "0")
 CAMERA_INDEX = int(_source) if _source.isdigit() else _source
 
 FRAME_W, FRAME_H = 1280, 720
-SEG_SIZE = 640          # 448 was noisy and split single objects into fragments
-CONF = 0.5
+# 448 was noisy, 640 dropped the feed to 4 fps, and FastSAM-x is 1.2 s a frame
+# for no fewer masks. 512 with the cleanup below is the honest sweet spot.
+SEG_SIZE = 512
+CONF = 0.6
 
 # FastSAM segments everything including the table and the background sheet.
 # Keep only masks in a plausible instrument size range, as a fraction of frame.
@@ -36,11 +38,19 @@ MIN_AREA, MAX_AREA = 0.004, 0.20
 
 # FastSAM happily returns the same object several times, plus slivers of it.
 # Drop a mask that overlaps a bigger kept one, or that is mostly inside it.
-MAX_IOU = 0.35
-MAX_CONTAINED = 0.65
+MAX_IOU = 0.30
+MAX_CONTAINED = 0.55
+
+# Wispy background fragments have low solidity; real tools are compact.
+MIN_SOLIDITY = 0.55
+# Objects on a tray do not run off the edge of the frame. Wall and table
+# fragments do, and they were the slivers cluttering the overlay.
+MAX_BORDER = 0.30
 
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
+
+_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -66,19 +76,51 @@ def _palette(n):
     return cv2.cvtColor(hsv.reshape(-1, 1, 3), cv2.COLOR_HSV2BGR).reshape(-1, 3)
 
 
+def _clean(m):
+    """Smooth the speckle off a raw mask and keep only its largest blob, so one
+    mask means one object rather than an object plus confetti."""
+    m = cv2.morphologyEx(m.astype("uint8"), cv2.MORPH_OPEN, _KERNEL)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, _KERNEL)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+    if count <= 1:
+        return None
+    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return labels == biggest
+
+
+def _is_object(m, area):
+    """Reject wispy background fragments and anything running off the frame."""
+    h, w = m.shape
+    border = m[0, :].sum() + m[-1, :].sum() + m[:, 0].sum() + m[:, -1].sum()
+    if border / (2 * (h + w)) > MAX_BORDER:
+        return False
+
+    contours, _ = cv2.findContours(m.astype("uint8"), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False
+    hull = cv2.contourArea(cv2.convexHull(max(contours, key=cv2.contourArea)))
+    return hull > 0 and area / hull >= MIN_SOLIDITY
+
+
 def _instrument_masks(result, shape):
     """FastSAM outlines everything it can see, often several times over. Drop
     the background sheet, the table, speckle, and duplicates of one object."""
     if result.masks is None:
         return []
-    h, w = shape[:2]
-    frame_area = h * w
+    # All the filtering runs at the mask's own resolution, not the frame's.
+    # Doing it at 1280x720 cost ~3x the frame time for identical results.
+    raw = result.masks.data.cpu().numpy() > 0.5
+    mh, mw = raw.shape[1:]
+    mask_area = mh * mw
 
     sized = []
-    for mask in result.masks.data:
-        m = cv2.resize(mask.cpu().numpy(), (w, h)) > 0.5
+    for m in raw:
+        m = _clean(m)
+        if m is None:
+            continue
         area = int(m.sum())
-        if MIN_AREA <= area / frame_area <= MAX_AREA:
+        if MIN_AREA <= area / mask_area <= MAX_AREA and _is_object(m, area):
             sized.append((area, m))
 
     kept = []
@@ -94,7 +136,10 @@ def _instrument_masks(result, shape):
                 break
         if not duplicate:
             kept.append((area, m))
-    return [m for _, m in kept]
+
+    h, w = shape[:2]
+    return [cv2.resize(m.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+            for _, m in kept]
 
 
 def _overlay(frame, masks):
@@ -130,6 +175,7 @@ def _capture_loop():
     global _raw, _annotated, _masks
     current = state["camera"]
     cam = _open(current)
+    last = time.time()
 
     while True:
         # A phone posting frames takes over; if it stops for 3s we fall back
@@ -151,6 +197,9 @@ def _capture_loop():
                 continue
         result = model.predict(frame, imgsz=SEG_SIZE, conf=CONF, verbose=False)[0]
         masks = _instrument_masks(result, frame.shape)
+        now = time.time()
+        state["fps"] = round(0.8 * state.get("fps", 0) + 0.2 / max(now - last, 1e-3), 1)
+        last = now
         with _lock:
             _raw = frame
             _masks = masks
