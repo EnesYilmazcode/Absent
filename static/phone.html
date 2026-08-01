@@ -50,7 +50,9 @@ async function post(blob) {
 function grabLoop() {
   const w = v.videoWidth, h = v.videoHeight;
   if (!w) return setTimeout(grabLoop, 100);
-  const scale = Math.min(1, 1280 / w);
+  // Cap the longest side. A phone held upright sends 1080x1920 otherwise,
+  // which is slow to segment and stretches the laptop page into a ribbon.
+  const scale = Math.min(1, 1280 / Math.max(w, h));
   canvas.width = w * scale; canvas.height = h * scale;
   canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
   canvas.toBlob(async b => {

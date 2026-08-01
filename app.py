@@ -25,12 +25,17 @@ _source = os.environ.get("ABSENT_CAMERA", "0")
 CAMERA_INDEX = int(_source) if _source.isdigit() else _source
 
 FRAME_W, FRAME_H = 1280, 720
-SEG_SIZE = 448
-CONF = 0.4
+SEG_SIZE = 640          # 448 was noisy and split single objects into fragments
+CONF = 0.5
 
 # FastSAM segments everything including the table and the background sheet.
 # Keep only masks in a plausible instrument size range, as a fraction of frame.
-MIN_AREA, MAX_AREA = 0.002, 0.20
+MIN_AREA, MAX_AREA = 0.004, 0.20
+
+# FastSAM happily returns the same object several times, plus slivers of it.
+# Drop a mask that overlaps a bigger kept one, or that is mostly inside it.
+MAX_IOU = 0.35
+MAX_CONTAINED = 0.65
 
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
@@ -54,18 +59,34 @@ def _palette(n):
 
 
 def _instrument_masks(result, shape):
-    """FastSAM outlines everything it can see. Drop the background sheet, the
-    table and speckle, and keep what is plausibly an object on the tray."""
+    """FastSAM outlines everything it can see, often several times over. Drop
+    the background sheet, the table, speckle, and duplicates of one object."""
     if result.masks is None:
         return []
     h, w = shape[:2]
     frame_area = h * w
-    kept = []
+
+    sized = []
     for mask in result.masks.data:
         m = cv2.resize(mask.cpu().numpy(), (w, h)) > 0.5
-        if MIN_AREA <= m.sum() / frame_area <= MAX_AREA:
-            kept.append(m)
-    return kept
+        area = int(m.sum())
+        if MIN_AREA <= area / frame_area <= MAX_AREA:
+            sized.append((area, m))
+
+    kept = []
+    for area, m in sorted(sized, key=lambda p: -p[0]):
+        duplicate = False
+        for kept_area, k in kept:
+            overlap = int(np.logical_and(m, k).sum())
+            if not overlap:
+                continue
+            union = area + kept_area - overlap
+            if overlap / union > MAX_IOU or overlap / area > MAX_CONTAINED:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append((area, m))
+    return [m for _, m in kept]
 
 
 def _overlay(frame, masks):

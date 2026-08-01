@@ -17,16 +17,18 @@ MODEL = "gemma4:e2b-it-qat"
 SEED = 42
 TIMEOUT = 120
 
+# Do not say "tray". Asked about a tray, E2B returns [] whenever it cannot see
+# a literal surgical tray, which is every frame of our demo.
 INVENTORY_PROMPT = (
-    "You are looking at a surgical instrument tray. List every distinct physical "
-    "object lying on the tray as a JSON array of short lowercase names. "
-    "Ignore the background, the table and any hands. "
+    "List every distinct portable object visible in this image as a JSON array "
+    "of short lowercase names. Include tools, instruments, containers and small "
+    "items lying on the surface. Do not list the surface itself, the table, the "
+    "floor, walls, furniture, people, hands or clothing. "
     "Use one name per object. Reply with the JSON array only."
 )
 
 CHECK_PROMPT = (
-    "You are looking at a surgical instrument tray.\n"
-    "Earlier this tray held exactly these items:\n{items}\n\n"
+    "Earlier this scene held exactly these items:\n{items}\n\n"
     "Look at the image and decide which of those items are still visible.\n"
     'Reply with JSON only, in the form {{"present": [...], "missing": [...]}}, '
     "using the item names exactly as written above and listing every item in "
