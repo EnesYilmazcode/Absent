@@ -117,7 +117,8 @@ function render(items, state) {
   // Two independent signals: Gemma names, segmentation counts shapes.
   const gap = Math.abs(state.tracking - items.filter(i => i.status !== 'inside').length);
   $('cross').className = 'sub' + (gap > 1 ? ' disagree' : '');
-  $('cross').textContent = `segmentation sees ${state.tracking} · ${state.fps || 0} fps`;
+  $('cross').textContent = `sees ${state.tracking} · motion ${state.motion}`
+                         + ` · ${state.fps || 0} fps`;
   $('msg').textContent = state.error ? state.error
                        : state.busy ? 'naming what it sees...' : 'watching';
 }

@@ -51,7 +51,7 @@ MAX_BORDER = 0.30
 # The count zone. Only what is inside this rectangle is tracked or counted, so
 # the jacket standing in for the body defines the field and the rest of the room
 # cannot wander into the count. Fractions of the frame, drag on the feed to move.
-ROI = {"x": 0.34, "y": 0.30, "w": 0.32, "h": 0.40}
+ROI = {"x": 0.26, "y": 0.20, "w": 0.48, "h": 0.60}
 
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
@@ -92,8 +92,11 @@ HEARTBEAT = 12.0       # re-check even when the scene looks unchanged
 # Fraction of the count zone that has to change frame to frame to count as
 # something happening, and the level it must fall back under to count as
 # settled. A still camera on a dark shirt sits near zero.
-MOTION_TRIGGER = 0.02
-MOTION_SETTLED = 0.01
+# Generous, because the camera is a phone in somebody's hand and never truly
+# stops moving. 0.01 for "settled" was unreachable and blocked every call.
+MOTION_TRIGGER = 0.06
+MOTION_SETTLED = 0.05
+MOTION_PATIENCE = 2.5  # if it never settles, ask anyway rather than never
 
 # Nothing is added within this many seconds of the last item. One object is
 # put in at a time, so a second name arriving right after the first is the
@@ -111,6 +114,8 @@ BLOCKLIST = {
     "background", "shadow", "light", "reflection", "line", "circle", "c",
     "hair", "head", "hairstyle", "skin", "neck", "ear", "eye", "nose", "mouth",
     "torso", "chest", "shoulder", "body",
+    # identify_held answers "none" when it sees nothing worth naming.
+    "none", "nothing", "unknown", "n/a", "na", "empty", "object", "item",
 }
 
 
@@ -507,7 +512,7 @@ def _watch_loop():
     which also keeps a hand moving through the field from poisoning anything.
     """
     history, last_run, last_count = [], 0.0, None
-    stirred = False
+    stirred, stirred_at = False, 0.0
 
     while True:
         time.sleep(0.1)
@@ -521,8 +526,13 @@ def _watch_loop():
         # and everything the camera reports is sensor noise.
         motion = state["motion"]
         if motion > MOTION_TRIGGER:
+            if not stirred:
+                stirred_at = time.time()
             stirred = True
-            continue                       # still moving, let it land first
+            # A handheld camera can stay above the threshold indefinitely.
+            # Waiting for perfect stillness means never asking at all.
+            if time.time() - stirred_at < MOTION_PATIENCE:
+                continue
         if not stirred and time.time() - last_run < HEARTBEAT:
             continue
 
@@ -532,24 +542,32 @@ def _watch_loop():
         common = max(set(history), key=history.count)
         if history.count(common) < STABLE_MAJORITY or history[-1] != common:
             continue
-        if motion > MOTION_SETTLED:
-            continue                       # not settled yet
+        if motion > MOTION_SETTLED and time.time() - stirred_at < MOTION_PATIENCE:
+            continue                       # not settled yet, but not forever
         if state["busy"] or time.time() - last_run < WATCH_PERIOD:
             continue
         if common == 0 and not catalog:
             continue                       # empty scene, nothing to do
 
         stirred = False
-        last_run, dropped = time.time(), last_count is not None and common < last_count
+        last_run = time.time()
+        dropped = last_count is not None and common < last_count
+        rose = last_count is None or common > last_count
         last_count = common
         try:
-            _reconcile(dropped, can_add=common > 0)
+            _reconcile(dropped, rose, can_add=common > 0)
         except Exception as e:
             state["error"] = f"watch: {type(e).__name__}"[:120]
 
 
-def _reconcile(dropped, can_add):
-    """One Gemma call, then fold what it saw into the manifest."""
+def _reconcile(dropped, rose, can_add):
+    """One Gemma call, chosen by what geometry says just happened.
+
+    Deliberately not the list prompt. Measured live: asked for a JSON array of
+    everything in the zone, E2B returned [] on a frame where the single-object
+    prompt correctly answered "phone". Listing is the harder question and it
+    was failing silently, so nothing was ever added to the manifest.
+    """
     with _lock:
         frame = None if _raw is None else _raw.copy()
         masks = list(_masks)
@@ -557,19 +575,37 @@ def _reconcile(dropped, can_add):
         return
 
     x1, y1, x2, y2 = _roi(frame.shape)
+    zone = frame[y1:y2, x1:x2]
+
+    # Something arrived: name that one thing and put it on the manifest.
+    new_item = (rose and can_add and len(catalog) < MANIFEST_CAP
+                and time.time() - state["last_add"] >= ITEM_COOLDOWN)
+    if new_item:
+        state["busy"] = True
+        try:
+            name = gemma.identify_held(zone)
+            state["error"] = ""
+        finally:
+            state["busy"] = False
+        if _plausible(name) and not gemma._match(name, [i["name"] for i in catalog]):
+            _add_item(name, frame, masks)
+            state["last_add"] = time.time()
+        return
+
+    # Otherwise check what is still there, against the manifest we already hold.
+    if not catalog:
+        return
     state["busy"] = True
     try:
-        seen = Counter(gemma.inventory(frame[y1:y2, x1:x2]))
+        present, _ = gemma.check_against(zone, [i["name"] for i in catalog])
         state["error"] = ""
     finally:
         state["busy"] = False
 
+    still_here = Counter(present)
     for item in catalog:
-        # Match, not equality: Gemma answers "scissor" for "scissors", and a
-        # rename is both a phantom new item and a phantom retained one.
-        hit = gemma._match(item["name"], [n for n in seen if seen[n] > 0])
-        if hit:
-            seen[hit] -= 1
+        if still_here[item["name"]] > 0:
+            still_here[item["name"]] -= 1
             item["misses"] = 0
             if item["status"] != "in view":
                 item["status"] = "in view"
@@ -583,38 +619,10 @@ def _reconcile(dropped, can_add):
                 item["status"] = "inside"
                 _log(f"{item['name']} went inside")
 
-    # Segmentation is the gatekeeper for new items. If it sees no shapes in the
-    # zone, nothing can have arrived, whatever Gemma thinks it read in the
-    # noise of an empty crop.
-    if not can_add or len(catalog) >= MANIFEST_CAP:
-        return
-    if time.time() - state["last_add"] < ITEM_COOLDOWN:
-        return
-
-    fresh = [n for n in dict.fromkeys(seen.elements())
-             if _plausible(n) and not gemma._match(n, [i["name"] for i in catalog])]
-    if not fresh:
-        return
-
-    # Exactly one item per event. Held up a fork, Gemma often answers
-    # ["fork", "knife"] or ["fork", "spoon"], and adding both puts a phantom
-    # instrument on the manifest. Items go in one at a time in this demo, so a
-    # second name in the same breath is the same object read twice. Ask once
-    # more for the single object, which is a far easier question than a list.
-    try:
-        name = gemma.identify_held(frame[y1:y2, x1:x2])
-    except Exception:
-        name = ""
-    if not _plausible(name) or gemma._match(name, [i["name"] for i in catalog]):
-        name = fresh[0]                    # fall back to the list's first answer
-
-    _add_item(name, frame, masks)
-    state["last_add"] = time.time()
-
 
 def _plausible(name):
     """Keep the manifest to things that could actually be an instrument."""
-    return (name not in BLOCKLIST
+    return (bool(name) and name not in BLOCKLIST
             and len(name.split()) <= 3
             and "part of" not in name and "piece of" not in name
             and not any(w in BLOCKLIST for w in name.split()))
