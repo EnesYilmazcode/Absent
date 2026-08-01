@@ -91,6 +91,18 @@ def check_against(frame, items):
     return present, missing
 
 
+HELD_PROMPT = (
+    "Name the single object the person is holding up to the camera. "
+    "Reply with just the name, one to three words, no punctuation, no sentence. "
+    "If nobody is holding anything, reply exactly: none"
+)
+
+
+def identify_held(frame):
+    """What is being held up right now. Used by the /try page."""
+    return _ask(HELD_PROMPT, frame).strip().strip(".").lower()[:60]
+
+
 def warm_up():
     """Cold starts have crashed llama-server once. Never do that on stage."""
     import numpy as np

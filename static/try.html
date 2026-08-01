@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absent - what is this?</title>
+<style>
+  body { margin:0; background:#0a0c10; color:#e8edf5;
+         font:16px/1.5 -apple-system,Segoe UI,system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; gap:18px;
+         padding:24px; }
+  h1 { margin:0; font-size:20px; font-weight:600; }
+  .hint { color:#7a8699; font-size:14px; margin:-10px 0 0; }
+  img { max-width:100%; max-height:52dvh; border-radius:10px; border:1px solid #232937; }
+  #answer { font-size:44px; font-weight:700; letter-spacing:-0.02em; min-height:56px;
+            text-align:center; }
+  #answer.none { color:#7a8699; font-size:26px; font-weight:500; }
+  #meta { color:#7a8699; font-size:14px; min-height:22px; }
+  .row { display:flex; gap:10px; }
+  button { padding:14px 26px; border-radius:8px; border:1px solid #232937;
+           background:#1d2431; color:#e8edf5; font-size:16px; font-weight:600;
+           cursor:pointer; }
+  button:hover:not(:disabled) { background:#273041; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.on { background:#31d0a5; border-color:#31d0a5; color:#06231b; }
+</style>
+</head>
+<body>
+  <h1>Hold something up to the camera</h1>
+  <p class="hint">Gemma has never seen it before and was never trained on it.</p>
+  <img id="feed" src="/feed" alt="camera">
+  <div id="answer">&nbsp;</div>
+  <div id="meta"></div>
+  <div class="row">
+    <button id="once">Identify</button>
+    <button id="keep">Keep going</button>
+  </div>
+
+<script>
+const answer = document.getElementById('answer');
+const meta = document.getElementById('meta');
+let looping = false, n = 0;
+
+async function ask() {
+  meta.textContent = 'looking…';
+  const t = performance.now();
+  const r = await (await fetch('/identify', {method:'POST'})).json();
+  const secs = ((performance.now() - t) / 1000).toFixed(1);
+  answer.textContent = r.name || '—';
+  answer.className = (r.name === 'none') ? 'none' : '';
+  meta.textContent = `${secs}s · ${++n} identifications · nothing left this laptop`;
+}
+
+document.getElementById('once').onclick = async () => {
+  document.getElementById('once').disabled = true;
+  await ask();
+  document.getElementById('once').disabled = false;
+};
+
+document.getElementById('keep').onclick = async function () {
+  looping = !looping;
+  this.classList.toggle('on', looping);
+  this.textContent = looping ? 'Stop' : 'Keep going';
+  while (looping) await ask();
+};
+</script>
+</body>
+</html>

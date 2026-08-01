@@ -215,6 +215,22 @@ def count_out():
     return state
 
 
+@app.get("/try")
+def try_page():
+    return FileResponse("static/try.html")
+
+
+@app.post("/identify")
+def identify():
+    """Hold something up, find out if Gemma can name it. Proof, not product."""
+    with _lock:
+        frame = None if _raw is None else _raw.copy()
+    if frame is None:
+        return {"name": "no camera frame yet"}
+    started = time.time()
+    return {"name": gemma.identify_held(frame), "seconds": round(time.time() - started, 1)}
+
+
 @app.get("/phone")
 def phone_page():
     return FileResponse("static/phone.html")
