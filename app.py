@@ -1,6 +1,8 @@
 """Absent - surgical instrument count verification, fully on-device.
 
-YOLOv8 segments the tray continuously so the feed looks live. Gemma 4 only
+FastSAM segments the tray continuously so the feed looks live. It is
+class-agnostic, so unlike COCO-trained YOLO it outlines instruments nobody
+trained it on. It cannot name anything, which is Gemma's job, and Gemma only
 fires on a count event, which is also how real surgical counts work.
 """
 
@@ -14,23 +16,30 @@ import cv2
 import numpy as np
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
-from ultralytics import YOLO
+from ultralytics import FastSAM
 
 import gemma
 
-CAMERA_INDEX = int(os.environ.get("ABSENT_CAMERA", 0))
+# Accepts a webcam index or a stream URL, so a phone-camera app works too.
+_source = os.environ.get("ABSENT_CAMERA", "0")
+CAMERA_INDEX = int(_source) if _source.isdigit() else _source
+
 FRAME_W, FRAME_H = 1280, 720
-YOLO_SIZE = 448
-CONF = 0.25
+SEG_SIZE = 448
+CONF = 0.4
+
+# FastSAM segments everything including the table and the background sheet.
+# Keep only masks in a plausible instrument size range, as a fraction of frame.
+MIN_AREA, MAX_AREA = 0.002, 0.20
 
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
 
 app = FastAPI()
-model = YOLO("yolov8n-seg.pt")
+model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
-         "busy": False, "camera": CAMERA_INDEX}
+         "busy": False, "camera": CAMERA_INDEX, "tracking": 0}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
@@ -42,34 +51,46 @@ def _palette(n):
     return cv2.cvtColor(hsv.reshape(-1, 1, 3), cv2.COLOR_HSV2BGR).reshape(-1, 3)
 
 
-def _overlay(frame, result):
-    """Class-agnostic masks and boxes. We deliberately do not draw YOLO's own
-    labels - naming is Gemma's job, and COCO labels would be wrong anyway."""
-    out = frame.copy()
+def _instrument_masks(result, shape):
+    """FastSAM outlines everything it can see. Drop the background sheet, the
+    table and speckle, and keep what is plausibly an object on the tray."""
     if result.masks is None:
-        return out
+        return []
+    h, w = shape[:2]
+    frame_area = h * w
+    kept = []
+    for mask in result.masks.data:
+        m = cv2.resize(mask.cpu().numpy(), (w, h)) > 0.5
+        if MIN_AREA <= m.sum() / frame_area <= MAX_AREA:
+            kept.append(m)
+    return kept
 
-    colors = _palette(len(result.masks))
+
+def _overlay(frame, masks):
+    out = frame.copy()
+    colors = _palette(len(masks))
     tint = out.copy()
-    for i, mask in enumerate(result.masks.data):
-        m = cv2.resize(mask.cpu().numpy(), (out.shape[1], out.shape[0])) > 0.5
-        tint[m] = colors[i]
-    out = cv2.addWeighted(tint, 0.4, out, 0.6, 0)
+    for color, m in zip(colors, masks):
+        tint[m] = color
+    out = cv2.addWeighted(tint, 0.45, out, 0.55, 0)
 
-    for i, box in enumerate(result.boxes.xyxy.cpu().numpy().astype(int)):
-        x1, y1, x2, y2 = box
-        cv2.rectangle(out, (x1, y1), (x2, y2), colors[i].tolist(), 2)
+    for color, m in zip(colors, masks):
+        contours, _ = cv2.findContours(m.astype("uint8"), cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(out, contours, -1, color.tolist(), 2)
 
-    cv2.putText(out, f"tracking {len(result.masks)}", (16, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+    cv2.putText(out, f"tracking {len(masks)}", (16, 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
     return out
 
 
-def _open(index):
-    cam = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-    cam.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
-    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
-    return cam
+def _open(source):
+    if isinstance(source, int):
+        cam = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
+        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
+        return cam
+    return cv2.VideoCapture(source)  # stream URL from a phone camera app
 
 
 def _capture_loop():
@@ -89,10 +110,12 @@ def _capture_loop():
         if not ok:
             time.sleep(0.05)
             continue
-        result = model.predict(frame, imgsz=YOLO_SIZE, conf=CONF, verbose=False)[0]
+        result = model.predict(frame, imgsz=SEG_SIZE, conf=CONF, verbose=False)[0]
+        masks = _instrument_masks(result, frame.shape)
         with _lock:
             _raw = frame
-            _annotated = _overlay(frame, result)
+            _annotated = _overlay(frame, masks)
+            state["tracking"] = len(masks)
 
 
 def _snapshot(tag):
@@ -179,6 +202,13 @@ def cameras():
 @app.post("/camera/{index}")
 def set_camera(index: int):
     state["camera"] = index
+    return state
+
+
+@app.post("/source")
+def set_source(url: str):
+    """Point at a phone camera app's stream instead of a local webcam."""
+    state["camera"] = url
     return state
 
 
