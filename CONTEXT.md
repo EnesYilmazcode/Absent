@@ -1,0 +1,222 @@
+# CONTEXT.md
+
+**Living document. Update it whenever a decision changes. Anyone joining this repo,
+human or agent, reads this file first.**
+
+Last updated: Aug 1, 2026 — build day.
+
+---
+
+## What we're building
+
+# Absent
+### Nothing left behind.
+
+Repo: https://github.com/EnesYilmazcode/Absent
+
+Surgical instrument count verification. A camera watches the instrument field.
+At "count in" and "count out" the system inventories what it sees. Anything present
+at count-in but missing at count-out gets flagged as unaccounted for.
+
+**Why it matters:** retained surgical items are a "never event" — roughly 1 in
+5,500–7,000 operations. The existing mitigation is manual verbal counting, which
+fails under distraction.
+
+**Why it must be on-device:** OR imagery is among the most sensitive data that
+exists. Nothing can be streamed to a cloud API. Everything runs locally.
+
+---
+
+## The core insight (this is the whole project)
+
+Alex's 2023 version needed a **fine-tuned YOLOv8** — they collected and labeled a
+custom dataset of instruments during the hackathon, because YOLO only recognizes
+classes it was trained on.
+
+**We replace the fine-tune with Gemma.** Gemma 4 is a vision-language model, so it
+names objects zero-shot with no training data at all. That means:
+
+- No dataset collection, no labeling, no training run
+- Generalizes to instruments nobody ever trained a detector on
+- Gemma is genuinely load-bearing, not decorative
+
+That sentence is the pitch and the Gemma Integration score.
+
+---
+
+## Architecture
+
+```
+webcam ──> YOLOv8 (class-agnostic, pretrained, CPU)  ──> boxes, live, ~30fps
+                          │
+                    [count event]
+                          ▼
+                    crop each box
+                          ▼
+              Gemma 4 E4B via Ollama (local, GPU)  ──> object names (JSON)
+                          ▼
+              set difference: count_in vs count_out
+                          ▼
+                    flag unaccounted items
+```
+
+**Simpler path to try first:** skip YOLO entirely. Send the whole frame to Gemma and
+ask for a JSON inventory. One call instead of a detection pipeline plus N crops. Add
+YOLO only if whole-image inventory misses small or overlapping objects.
+
+### Why Gemma only fires at count events, not every frame
+
+E4B on an RTX 3050 Ti is seconds per image, so continuous per-frame inference is
+impossible. It also has no memory across calls, so it cannot maintain object identity
+over time — that is YOLO + tracker's job.
+
+This is not a compromise. **Real surgical counts happen at defined moments**
+(before incision, before closure), not continuously. The architecture matches the
+actual clinical workflow.
+
+The demo still reads as fully live because the YOLO overlay runs continuously on the
+video feed the whole time.
+
+---
+
+## Hardware and stack
+
+- **Machine:** HP Victus 15-fb0xxx — Ryzen 7 5800H, 16 GB RAM, RTX 3050 Ti (4 GB
+  VRAM), Windows 11. Disk was nearly full; cleared on build day.
+- **Model:** Gemma 4 **E4B** via Ollama. 4 GB VRAM caps us here — 12B and above will
+  not fit. E4B is ~3 GB at Q4.
+- **Endpoint:** `http://localhost:11434/v1` (OpenAI-compatible), model `gemma4:e4b`
+- **Detection:** Ultralytics YOLOv8n, **CPU-only torch** — keep all VRAM for Gemma
+  - `pip install ultralytics --index-url https://download.pytorch.org/whl/cpu`
+- **No cloud.** Cerebras (`gemma-4-31b`) exists as an account but is NOT used —
+  using it would disqualify us from the On-Device track.
+
+---
+
+## The go/no-go test
+
+**Nothing else matters until this passes.** Put 8 visually distinct objects on a
+table, good lighting, no overlap. Photograph. Then run twice on the same image:
+
+```powershell
+ollama run gemma4:e4b "List every object as a JSON array of names. Be exact, no extras." ./tray.jpg
+```
+
+- Both runs return the same clean list → build it
+- Hallucinated objects or the two lists disagree → the naming layer is unreliable,
+  and no amount of YOLO fixes that. Fall back.
+
+Record the result of this test here when it's run.
+
+**Result:** _(not yet run)_
+
+---
+
+## Event constraints
+
+| | |
+|---|---|
+| Event | Build with Gemma NYC: On-Device AI for Healthcare |
+| Venue | Celonis, One World Trade Center, floor 70 |
+| **Submissions lock** | **4:00 PM** (moved from 3:45 in the morning blast) |
+| Presentations | 4:00 PM live |
+| Winners | 5:30 PM |
+| Track | **On-Device Private Health** |
+| Prize pool | $2,000 across three tracks |
+| Submission | Kaggle |
+
+### Hard rules
+
+- Gemma 4 must be **core**, not decorative
+- **Decision support only.** No diagnosis, no treatment recommendations.
+  Our framing: the system *assists* the count, it does not replace the nurse or
+  make a clinical determination.
+- **Synthetic or public data only.** No real patient data, no real OR footage.
+  We use ordinary objects on a table standing in for instruments — which is exactly
+  what Alex's team did with a cardboard box in 2023.
+
+### Rubric (100 pts)
+
+| Weight | Criterion | Our position |
+|---|---|---|
+| 30 | Healthcare Impact | Strong — never-event, well-documented problem |
+| 25 | Gemma Integration | Strong — zero-shot naming replaces a fine-tune |
+| 20 | Functionality | Depends entirely on the go/no-go test |
+| 15 | Presentation & Writeup | Start the writeup by 2:30, do not leave to the end |
+| 10 | Privacy & Safety | Strong — fully offline, wifi off during demo |
+
+---
+
+## Demo plan
+
+1. Camera live on screen, YOLO boxes tracking objects as they move
+2. **Turn wifi off in front of the room.** This is the whole pitch, made visible.
+3. Hit "count in" — system inventories the field
+4. **Hand the tray to a judge. Let them remove an object.** Unfakeable — no
+   pre-recording survives judge-supplied input.
+5. Hit "count out" — system names exactly what's missing
+6. Close: this ran on a $700 laptop with no internet. OR imagery never left the
+   machine.
+
+**Insurance: screen-record the working demo the moment it works.** The rubric allows
+"live demo **or video**." Record it regardless of how well things are going.
+
+---
+
+## Decided / rejected
+
+**Decided:**
+- On-Device Private Health track
+- Gemma zero-shot naming instead of fine-tuning a detector
+- Count-event inference, not per-frame
+- E4B local via Ollama
+
+**Rejected, and why:**
+- *Fine-tuning YOLO on instruments* — rebuilds the 2023 project, demotes Gemma to
+  decoration, and there is no time to collect and label a dataset
+- *Renting a GPU to train* — same reason; training is the thing we designed around
+- *Cerebras / any cloud inference* — disqualifies the On-Device track
+- *Video input to Gemma* — only supported on 31B, which is cloud-only for us
+- *Detecting items inside the body* — a retained sponge is retained because it's
+  hidden. No camera can see it. We watch the instrument field, not the patient.
+- *TrialBridge* (clinical trial matching + voice agent) — earlier direction, needs
+  network for ClinicalTrials.gov and Twilio, incompatible with On-Device
+
+---
+
+## Attribution and license — READ THIS
+
+Alex Gulko's **Uncountable** (https://github.com/gulkoa/uncountable, forked from
+DavidNovikov/hackohio2023) won 1st place at HackOHI/O 2023 doing real-time surgical
+instrument tracking with a fine-tuned YOLOv8. It is **AGPL-3.0**.
+
+If we use any of that code:
+- This repo must also be **AGPL-3.0**
+- Source disclosure and attribution are **license conditions**, not courtesy
+- Alex must have given explicit permission
+
+The writeup must say plainly: built on top of an existing open-source instrument
+counting system by Alex Gulko and David Novikov, extended with a Gemma 4 zero-shot
+identification layer running fully on-device.
+
+**This is a strength, not a weakness.** It forces the question "what did Gemma add?"
+and our answer is good: it removes the training requirement entirely.
+
+---
+
+## Open questions
+
+- [ ] Does the go/no-go naming test pass?
+- [ ] Does Alex's repo run unmodified? (30 min timebox — if not, build fresh)
+- [ ] Are Alex's *trained* weights in the repo, or just base yolov8m-seg.pt?
+- [ ] Permission from Alex — confirmed?
+- [ ] Does class-agnostic YOLO give usable boxes without a fine-tune?
+
+---
+
+## Conventions for this repo
+
+- **Update this file when a decision changes.** Stale context is worse than none.
+- Commit often with real messages — agents read the log
+- Keep secrets out of the repo (there shouldn't be any; we're fully local)
+- Anything an agent should not touch goes in `.gitignore` and gets noted here
