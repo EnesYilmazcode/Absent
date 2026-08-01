@@ -65,11 +65,12 @@ model = FastSAM("FastSAM-s.pt")
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
          "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam",
          "roi": dict(ROI), "error": "", "named": 0, "segmented": 0,
-         "at_in": "", "at_out": ""}
+         "at_in": "", "at_out": "", "motion": 0.0, "last_add": 0.0}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
 _masks = []
+_prev_zone = None
 _phone = None          # latest frame posted by the phone
 _phone_seen = 0.0      # when it arrived, so we can fall back if the phone drops
 
@@ -87,6 +88,17 @@ STABLE_SAMPLES = 8     # 0.1s apart, so the scene must hold for ~0.8s
 STABLE_MAJORITY = 6    # of those 8, not all 8: masks flicker
 WATCH_PERIOD = 0.4     # cooldown after a call returns
 HEARTBEAT = 12.0       # re-check even when the scene looks unchanged
+
+# Fraction of the count zone that has to change frame to frame to count as
+# something happening, and the level it must fall back under to count as
+# settled. A still camera on a dark shirt sits near zero.
+MOTION_TRIGGER = 0.02
+MOTION_SETTLED = 0.01
+
+# Nothing is added within this many seconds of the last item. One object is
+# put in at a time, so a second name arriving right after the first is the
+# same object being read differently, not a second instrument.
+ITEM_COOLDOWN = 3.0
 MANIFEST_CAP = 8       # hard stop against free-association on a dark crop
 
 # Gemma is told to skip these and names them anyway. The jacket standing in for
@@ -124,6 +136,25 @@ def _in_roi(m, shape):
     if not area:
         return False
     return int(m[y1:y2, x1:x2].sum()) / area >= 0.5
+
+
+def _measure_motion(frame):
+    """How much the count zone changed since the last frame, 0 to 1.
+
+    A phone pointed at a dark shirt produces almost nothing here, so this is
+    what tells the difference between an instrument arriving and sensor noise.
+    Cheap: one downscaled grey difference per frame, no model involved.
+    """
+    global _prev_zone
+    x1, y1, x2, y2 = _roi(frame.shape)
+    zone = frame[y1:y2, x1:x2]
+    if zone.size == 0:
+        return
+    small = cv2.cvtColor(cv2.resize(zone, (96, 96)), cv2.COLOR_BGR2GRAY)
+    if _prev_zone is not None:
+        diff = cv2.absdiff(small, _prev_zone)
+        state["motion"] = round(float((diff > 18).mean()), 3)
+    _prev_zone = small
 
 
 def _clean(m):
@@ -257,6 +288,7 @@ def _capture_loop():
                 time.sleep(0.05)
                 continue
             misses = 0
+        _measure_motion(frame)
         result = model.predict(frame, imgsz=SEG_SIZE, conf=CONF, verbose=False)[0]
         masks = _instrument_masks(result, frame.shape)
         now = time.time()
@@ -475,6 +507,7 @@ def _watch_loop():
     which also keeps a hand moving through the field from poisoning anything.
     """
     history, last_run, last_count = [], 0.0, None
+    stirred = False
 
     while True:
         time.sleep(0.1)
@@ -483,23 +516,30 @@ def _watch_loop():
         if len(history) < STABLE_SAMPLES:
             continue
 
-        # Not exact equality. Requiring 12 identical samples never fires while
-        # a hand is in shot; the most common value winning 9 of 12 rides out
-        # FastSAM dropping a mask for two or three frames.
+        # Motion first. Something has to actually move in the zone before we
+        # spend 3.7s on a Gemma call: pointed at a dark shirt, nothing moves,
+        # and everything the camera reports is sensor noise.
+        motion = state["motion"]
+        if motion > MOTION_TRIGGER:
+            stirred = True
+            continue                       # still moving, let it land first
+        if not stirred and time.time() - last_run < HEARTBEAT:
+            continue
+
+        # Then stillness. Not exact equality: requiring every sample to match
+        # never fires while a hand is in shot, so the most common value winning
+        # a majority rides out FastSAM dropping a mask for a frame or two.
         common = max(set(history), key=history.count)
         if history.count(common) < STABLE_MAJORITY or history[-1] != common:
             continue
+        if motion > MOTION_SETTLED:
+            continue                       # not settled yet
         if state["busy"] or time.time() - last_run < WATCH_PERIOD:
-            continue
-        # Normally only re-ask when the number of things on screen changed, but
-        # swapping one item for another keeps the count identical, so re-check
-        # anyway on a slow heartbeat.
-        if common == last_count and time.time() - last_run < HEARTBEAT:
             continue
         if common == 0 and not catalog:
             continue                       # empty scene, nothing to do
 
-        time.sleep(0.15)                   # let the hand finish withdrawing
+        stirred = False
         last_run, dropped = time.time(), last_count is not None and common < last_count
         last_count = common
         try:
@@ -546,15 +586,30 @@ def _reconcile(dropped, can_add):
     # Segmentation is the gatekeeper for new items. If it sees no shapes in the
     # zone, nothing can have arrived, whatever Gemma thinks it read in the
     # noise of an empty crop.
-    if not can_add:
+    if not can_add or len(catalog) >= MANIFEST_CAP:
+        return
+    if time.time() - state["last_add"] < ITEM_COOLDOWN:
         return
 
-    for name in set(seen.elements()):
-        if len(catalog) >= MANIFEST_CAP or not _plausible(name):
-            continue
-        if gemma._match(name, [i["name"] for i in catalog]):
-            continue                       # a rename of something we already hold
-        _add_item(name, frame, masks)
+    fresh = [n for n in dict.fromkeys(seen.elements())
+             if _plausible(n) and not gemma._match(n, [i["name"] for i in catalog])]
+    if not fresh:
+        return
+
+    # Exactly one item per event. Held up a fork, Gemma often answers
+    # ["fork", "knife"] or ["fork", "spoon"], and adding both puts a phantom
+    # instrument on the manifest. Items go in one at a time in this demo, so a
+    # second name in the same breath is the same object read twice. Ask once
+    # more for the single object, which is a far easier question than a list.
+    try:
+        name = gemma.identify_held(frame[y1:y2, x1:x2])
+    except Exception:
+        name = ""
+    if not _plausible(name) or gemma._match(name, [i["name"] for i in catalog]):
+        name = fresh[0]                    # fall back to the list's first answer
+
+    _add_item(name, frame, masks)
+    state["last_add"] = time.time()
 
 
 def _plausible(name):
