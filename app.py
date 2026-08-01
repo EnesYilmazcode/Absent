@@ -47,6 +47,11 @@ MIN_SOLIDITY = 0.55
 # fragments do, and they were the slivers cluttering the overlay.
 MAX_BORDER = 0.30
 
+# The count zone. Only what is inside this rectangle is tracked or counted, so
+# the jacket standing in for the body defines the field and the rest of the room
+# cannot wander into the count. Fractions of the frame: width, height.
+ROI_W, ROI_H = 0.62, 0.74
+
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
 
@@ -57,7 +62,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
-         "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam"}
+         "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam",
+         "roi_w": ROI_W, "roi_h": ROI_H}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
@@ -74,6 +80,19 @@ def _palette(n):
     hues = np.linspace(0, 179, max(n, 1), dtype=np.uint8)
     hsv = np.stack([hues, np.full_like(hues, 255), np.full_like(hues, 255)], axis=1)
     return cv2.cvtColor(hsv.reshape(-1, 1, 3), cv2.COLOR_HSV2BGR).reshape(-1, 3)
+
+
+def _roi(shape):
+    h, w = shape[:2]
+    rw, rh = int(w * state["roi_w"]), int(h * state["roi_h"])
+    x1, y1 = (w - rw) // 2, (h - rh) // 2
+    return x1, y1, x1 + rw, y1 + rh
+
+
+def _in_roi(m, shape):
+    x1, y1, x2, y2 = _roi(shape)
+    ys, xs = np.nonzero(m)
+    return x1 <= xs.mean() <= x2 and y1 <= ys.mean() <= y2
 
 
 def _clean(m):
@@ -138,8 +157,9 @@ def _instrument_masks(result, shape):
             kept.append((area, m))
 
     h, w = shape[:2]
-    return [cv2.resize(m.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+    full = [cv2.resize(m.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > 0
             for _, m in kept]
+    return [m for m in full if _in_roi(m, shape)]
 
 
 def _overlay(frame, masks):
@@ -155,6 +175,10 @@ def _overlay(frame, masks):
                                        cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(out, contours, -1, color.tolist(), 2)
 
+    x1, y1, x2, y2 = _roi(frame.shape)
+    cv2.rectangle(out, (x1, y1), (x2, y2), (255, 255, 255), 2)
+    cv2.putText(out, "count zone", (x1 + 10, y1 + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     cv2.putText(out, f"tracking {len(masks)}", (16, 42),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
     return out
@@ -208,13 +232,17 @@ def _capture_loop():
 
 
 def _snapshot(tag):
+    """Gemma only ever sees the count zone. Cropping to it keeps the rest of
+    the room, and whoever is standing in it, out of the inventory."""
     with _lock:
         frame = None if _raw is None else _raw.copy()
     if frame is None:
         raise RuntimeError("no frame yet")
+    x1, y1, x2, y2 = _roi(frame.shape)
+    zone = frame[y1:y2, x1:x2]
     stamp = datetime.now().strftime("%H%M%S")
-    cv2.imwrite(str(CAPTURES / f"{tag}_{stamp}.jpg"), frame)
-    return frame
+    cv2.imwrite(str(CAPTURES / f"{tag}_{stamp}.jpg"), zone)
+    return zone
 
 
 @app.on_event("startup")
@@ -285,8 +313,10 @@ def identify():
         frame = None if _raw is None else _raw.copy()
     if frame is None:
         return {"name": "no camera frame yet"}
+    x1, y1, x2, y2 = _roi(frame.shape)
     started = time.time()
-    return {"name": gemma.identify_held(frame), "seconds": round(time.time() - started, 1)}
+    return {"name": gemma.identify_held(frame[y1:y2, x1:x2]),
+            "seconds": round(time.time() - started, 1)}
 
 
 def _held_mask(masks, shape):
@@ -408,4 +438,12 @@ def set_source(url: str):
 @app.post("/reset")
 def reset():
     state.update(stage="idle", count_in=[], present=[], missing=[])
+    return state
+
+
+@app.post("/zone/{width}/{height}")
+def set_zone(width: float, height: float):
+    """Resize the count zone to fit the jacket, as fractions of the frame."""
+    state["roi_w"] = min(max(width, 0.15), 1.0)
+    state["roi_h"] = min(max(height, 0.15), 1.0)
     return state
