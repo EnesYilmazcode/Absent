@@ -65,11 +65,12 @@ model = FastSAM("FastSAM-s.pt")
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
          "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam",
          "roi": dict(ROI), "error": "", "named": 0, "segmented": 0,
-         "at_in": "", "at_out": "", "motion": 0.0, "last_add": 0.0}
+         "at_in": "", "at_out": "", "motion": 0.0, "last_add": 0.0, "visible": 0}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
-_masks = []
+_masks = []            # inside the count zone
+_all_masks = []        # anywhere in frame
 _prev_zone = None
 _phone = None          # latest frame posted by the phone
 _phone_seen = 0.0      # when it arrived, so we can fall back if the phone drops
@@ -271,12 +272,11 @@ def _instrument_masks(result, shape):
             kept.append((area, m))
 
     h, w = shape[:2]
-    full = [cv2.resize(m.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+    return [cv2.resize(m.astype("uint8"), (w, h), interpolation=cv2.INTER_NEAREST) > 0
             for _, m in kept]
-    return [m for m in full if _in_roi(m, shape)]
 
 
-def _overlay(frame, masks):
+def _overlay(frame, masks, in_zone=()):
     out = frame.copy()
     colors = _palette(len(masks))
     tint = out.copy()
@@ -306,7 +306,7 @@ def _open(source):
 def _capture_loop():
     """Watches state['camera'] so the iPhone virtual webcam can be selected
     from the UI without restarting the server mid-demo."""
-    global _raw, _annotated, _masks
+    global _raw, _annotated, _masks, _all_masks
     current = state["camera"]
     cam = _open(current)
     last = time.time()
@@ -346,12 +346,18 @@ def _capture_loop():
         now = time.time()
         state["fps"] = round(0.8 * state.get("fps", 0) + 0.2 / max(now - last, 1e-3), 1)
         last = now
+        # Everything the camera can see, and the subset deliberately placed in
+        # the count zone. An instrument set aside is still accounted for; only
+        # the zone decides what gets added to the manifest.
+        in_zone = [m for m in masks if _in_roi(m, frame.shape)]
         _track_presence(masks, frame.shape)
         with _lock:
             _raw = frame
-            _masks = masks
-            _annotated = _overlay(frame, masks)
-            state["tracking"] = len(masks)
+            _masks = in_zone
+            _all_masks = masks
+            _annotated = _overlay(frame, masks, in_zone)
+            state["tracking"] = len(in_zone)
+            state["visible"] = len(masks)
       except Exception as e:
         state["error"] = f"camera: {type(e).__name__}"
         time.sleep(0.2)
@@ -629,12 +635,19 @@ def _reconcile(dropped, rose, can_add):
     new_item = (rose and can_add and len(catalog) < MANIFEST_CAP
                 and time.time() - state["last_add"] >= ITEM_COOLDOWN)
     if new_item:
+        # Before spending a call: is this shape already on the manifest? One
+        # fork read as "fork" then "utensil" would otherwise be two forks.
+        candidate = _held_mask(masks, frame.shape)
+        if candidate is not None and _already_catalogued(candidate, frame.shape):
+            return
+
         state["busy"] = True
         try:
             name = gemma.identify_held(zone)
             state["error"] = ""
         finally:
             state["busy"] = False
+        name = _shape_hint(candidate, name)
         if _plausible(name) and not gemma._match(name, [i["name"] for i in catalog]):
             _add_item(name, frame, masks)
             state["last_add"] = time.time()
@@ -642,6 +655,35 @@ def _reconcile(dropped, rose, can_add):
 
     # Nothing else to do. Whether a catalogued instrument is still visible is
     # decided by _track_presence, every frame, without asking Gemma at all.
+
+
+def _already_catalogued(mask, shape):
+    """Same shape, same place as something we already hold. Guards against one
+    object being catalogued twice because Gemma named it differently."""
+    ys, xs = np.nonzero(mask)
+    if not len(ys):
+        return False
+    area, cx, cy = int(mask.sum()), float(xs.mean()), float(ys.mean())
+    diag = (shape[0] ** 2 + shape[1] ** 2) ** 0.5
+    for item in catalog:
+        near = ((cx - item["cx"]) ** 2 + (cy - item["cy"]) ** 2) ** 0.5 < MOVE_RADIUS * diag
+        similar = abs(area - item["area"]) <= AREA_TOLERANCE * max(item["area"], 1)
+        if near and similar and item["status"] != "inside":
+            return True
+    return False
+
+
+def _shape_hint(mask, name):
+    """A long, thin, pale object is cutlery. E2B flips between fork, knife and
+    spoon on exactly this shape, and the outline is the more reliable signal."""
+    if mask is None or gemma._match(name, ["fork", "knife", "spoon", "utensil"]) is None:
+        return name
+    ys, xs = np.nonzero(mask)
+    if not len(ys):
+        return name
+    long_side = max(np.ptp(ys), np.ptp(xs))
+    short_side = max(min(np.ptp(ys), np.ptp(xs)), 1)
+    return "fork" if long_side / short_side >= 3.0 else name
 
 
 def _plausible(name):
