@@ -142,7 +142,9 @@ $('clear').onclick = async () => {
 (function video() {
   const img = $('feed'), buf = new Image();
   buf.onload = () => { img.src = buf.src; setTimeout(tick, 90); };
-  buf.onerror = () => setTimeout(tick, 400);
+  // 503 until the first frame is segmented, and any transient failure; retry
+  // quickly rather than sitting on a black screen.
+  buf.onerror = () => setTimeout(tick, 250);
   function tick() { buf.src = '/frame.jpg?t=' + Date.now(); }
   tick();
 })();

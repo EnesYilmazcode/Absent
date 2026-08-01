@@ -108,8 +108,10 @@ ITEM_COOLDOWN = 3.0
 # normal, so an instrument has to be gone for this long before it counts as
 # retained inside the body.
 HIDDEN_AFTER = 2.0
-MOVE_RADIUS = 0.25     # how far an object may move between frames, of the diagonal
-AREA_TOLERANCE = 0.7   # how much its mask may grow or shrink and still be it
+# Both were far too loose: a quarter of the diagonal is most of the frame, and
+# plus or minus 70% of area let an apple pass as a fork.
+MOVE_RADIUS = 0.12     # how far an object may move between frames, of the diagonal
+AREA_TOLERANCE = 0.45  # how much its mask may grow or shrink and still be it
 MANIFEST_CAP = 8       # hard stop against free-association on a dark crop
 
 # Gemma is told to skip these and names them anyway. The jacket standing in for
@@ -171,14 +173,24 @@ def _track_presence(masks, shape):
         if len(ys):
             shapes.append((int(m.sum()), float(xs.mean()), float(ys.mean())))
 
+    # One shape can only be one instrument. Without this an apple satisfied the
+    # fork's check as well as its own, so every item read as still present and
+    # hiding one of two changed nothing on screen.
+    claimed = set()
     for item in catalog:
-        match = None
-        for area, cx, cy in shapes:
-            near = ((cx - item["cx"]) ** 2 + (cy - item["cy"]) ** 2) ** 0.5 < MOVE_RADIUS * diag
-            similar = abs(area - item["area"]) <= AREA_TOLERANCE * max(item["area"], 1)
-            if near and similar:
-                match = (area, cx, cy)
-                break
+        match, best = None, None
+        for i, (area, cx, cy) in enumerate(shapes):
+            if i in claimed:
+                continue
+            gap = ((cx - item["cx"]) ** 2 + (cy - item["cy"]) ** 2) ** 0.5
+            drift = abs(area - item["area"]) / max(item["area"], 1)
+            if gap > MOVE_RADIUS * diag or drift > AREA_TOLERANCE:
+                continue
+            score = gap / (MOVE_RADIUS * diag) + drift / AREA_TOLERANCE
+            if best is None or score < best:
+                match, best, chosen = (area, cx, cy), score, i
+        if match:
+            claimed.add(chosen)
 
         if match:
             item["area"], item["cx"], item["cy"] = match
@@ -277,17 +289,14 @@ def _instrument_masks(result, shape):
 
 
 def _overlay(frame, masks, in_zone=()):
+    # Outlines only. Filling the masks in made a busy scene unreadable and hid
+    # the objects themselves, which are the thing the judge is looking at.
     out = frame.copy()
     colors = _palette(len(masks))
-    tint = out.copy()
-    for color, m in zip(colors, masks):
-        tint[m] = color
-    out = cv2.addWeighted(tint, 0.45, out, 0.55, 0)
-
     for color, m in zip(colors, masks):
         contours, _ = cv2.findContours(m.astype("uint8"), cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(out, contours, -1, color.tolist(), 2)
+        cv2.drawContours(out, contours, -1, color.tolist(), 3)
 
     x1, y1, x2, y2 = _roi(frame.shape)
     cv2.rectangle(out, (x1, y1), (x2, y2), (255, 255, 255), 2)
@@ -833,18 +842,23 @@ def set_source(url: str):
 
 @app.post("/reset")
 def reset():
+    # last_add too, or Reset leaves the three second cooldown still running and
+    # the first item after a reset is silently dropped.
     state.update(stage="idle", count_in=[], present=[], missing=[], error="",
-                 named=0, segmented=0, at_in="", at_out="")
+                 named=0, segmented=0, at_in="", at_out="", last_add=0.0)
     return state
 
 
 @app.post("/zone")
 async def set_zone(request: Request):
     """Drag a rectangle on the feed to say where the count happens."""
-    r = await request.json()
-    x = min(max(float(r["x"]), 0.0), 0.95)
-    y = min(max(float(r["y"]), 0.0), 0.95)
-    state["roi"] = {"x": x, "y": y,
-                    "w": min(max(float(r["w"]), 0.05), 1.0 - x),
-                    "h": min(max(float(r["h"]), 0.05), 1.0 - y)}
+    try:
+        r = await request.json()
+        x = min(max(float(r["x"]), 0.0), 0.95)
+        y = min(max(float(r["y"]), 0.0), 0.95)
+        state["roi"] = {"x": x, "y": y,
+                        "w": min(max(float(r["w"]), 0.05), 1.0 - x),
+                        "h": min(max(float(r["h"]), 0.05), 1.0 - y)}
+    except Exception:
+        pass                    # a bad drag must not take the server with it
     return state
