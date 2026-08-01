@@ -14,7 +14,11 @@ from collections import Counter
 import cv2
 import requests
 
-OLLAMA = "http://localhost:11434/api/generate"
+# 127.0.0.1, never "localhost". On Windows localhost resolves to ::1 first,
+# Ollama binds IPv4 only, and every call burned a fixed 2.04s waiting for the
+# IPv6 connect to fail. Measured: 3.83s per image against 1.52s. Same model.
+OLLAMA = "http://127.0.0.1:11434/api/generate"
+_SESSION = requests.Session()   # reuse the connection instead of dialling again
 MODEL = "gemma4:e2b-it-qat"
 SEED = 42
 # Connect fast so a dead Ollama fails in seconds, but allow a slow first read.
@@ -71,7 +75,7 @@ def _ask(prompt, frame):
         "keep_alive": -1,
         "options": {"temperature": 0, "seed": SEED},
     }
-    r = requests.post(OLLAMA, json=body, timeout=TIMEOUT)
+    r = _SESSION.post(OLLAMA, json=body, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()["response"]
 

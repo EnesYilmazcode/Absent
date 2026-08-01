@@ -102,6 +102,13 @@ MOTION_PATIENCE = 2.5  # if it never settles, ask anyway rather than never
 # put in at a time, so a second name arriving right after the first is the
 # same object being read differently, not a second instrument.
 ITEM_COOLDOWN = 3.0
+
+# Presence tracking, per frame and without Gemma. Losing a mask for a moment is
+# normal, so an instrument has to be gone for this long before it counts as
+# retained inside the body.
+HIDDEN_AFTER = 2.0
+MOVE_RADIUS = 0.25     # how far an object may move between frames, of the diagonal
+AREA_TOLERANCE = 0.7   # how much its mask may grow or shrink and still be it
 MANIFEST_CAP = 8       # hard stop against free-association on a dark crop
 
 # Gemma is told to skip these and names them anyway. The jacket standing in for
@@ -116,6 +123,7 @@ BLOCKLIST = {
     "torso", "chest", "shoulder", "body",
     # identify_held answers "none" when it sees nothing worth naming.
     "none", "nothing", "unknown", "n/a", "na", "empty", "object", "item",
+    "t-shirt", "tshirt", "t shirt", "sleeve", "collar", "hood",
 }
 
 
@@ -141,6 +149,45 @@ def _in_roi(m, shape):
     if not area:
         return False
     return int(m[y1:y2, x1:x2].sum()) / area >= 0.5
+
+
+def _track_presence(masks, shape):
+    """Is each catalogued instrument still visible? Geometry only.
+
+    Gemma names an instrument once, when it arrives. After that, asking a
+    language model every few seconds whether it can still see it is both slow
+    and unreliable. A shape of about the right size in about the right place is
+    the same object, which is how the 2023 project did it, and it runs every
+    frame instead of every four seconds.
+    """
+    if not catalog:
+        return
+    now = time.time()
+    diag = (shape[0] ** 2 + shape[1] ** 2) ** 0.5
+    shapes = []
+    for m in masks:
+        ys, xs = np.nonzero(m)
+        if len(ys):
+            shapes.append((int(m.sum()), float(xs.mean()), float(ys.mean())))
+
+    for item in catalog:
+        match = None
+        for area, cx, cy in shapes:
+            near = ((cx - item["cx"]) ** 2 + (cy - item["cy"]) ** 2) ** 0.5 < MOVE_RADIUS * diag
+            similar = abs(area - item["area"]) <= AREA_TOLERANCE * max(item["area"], 1)
+            if near and similar:
+                match = (area, cx, cy)
+                break
+
+        if match:
+            item["area"], item["cx"], item["cy"] = match
+            item["seen"] = now
+            if item["status"] == "inside":
+                item["status"] = "in view"
+                _log(f"{item['name']} came back out")
+        elif item["status"] != "inside" and now - item["seen"] > HIDDEN_AFTER:
+            item["status"] = "inside"
+            _log(f"{item['name']} went inside")
 
 
 def _measure_motion(frame):
@@ -299,6 +346,7 @@ def _capture_loop():
         now = time.time()
         state["fps"] = round(0.8 * state.get("fps", 0) + 0.2 / max(now - last, 1e-3), 1)
         last = now
+        _track_presence(masks, frame.shape)
         with _lock:
             _raw = frame
             _masks = masks
@@ -592,32 +640,8 @@ def _reconcile(dropped, rose, can_add):
             state["last_add"] = time.time()
         return
 
-    # Otherwise check what is still there, against the manifest we already hold.
-    if not catalog:
-        return
-    state["busy"] = True
-    try:
-        present, _ = gemma.check_against(zone, [i["name"] for i in catalog])
-        state["error"] = ""
-    finally:
-        state["busy"] = False
-
-    still_here = Counter(present)
-    for item in catalog:
-        if still_here[item["name"]] > 0:
-            still_here[item["name"]] -= 1
-            item["misses"] = 0
-            if item["status"] != "in view":
-                item["status"] = "in view"
-                _log(f"{item['name']} came back out")
-        else:
-            item["misses"] += 1
-            # Asymmetric on purpose. If the mask count also dropped, geometry
-            # corroborates the disappearance and it is called immediately.
-            # Otherwise Gemma just under-reported, so wait for a second miss.
-            if item["status"] != "inside" and (dropped or item["misses"] >= 2):
-                item["status"] = "inside"
-                _log(f"{item['name']} went inside")
+    # Nothing else to do. Whether a catalogued instrument is still visible is
+    # decided by _track_presence, every frame, without asking Gemma at all.
 
 
 def _plausible(name):
@@ -649,9 +673,13 @@ def _add_item(name, frame, masks):
 
     fname = f"{len(catalog):02d}_{re.sub(r'[^a-z0-9]+', '-', name).strip('-')}.jpg"
     cv2.imwrite(str(CATALOG / fname), thumb)
+    ys, xs = np.nonzero(mask) if mask is not None else (np.array([]), np.array([]))
     catalog.append({"name": name, "file": f"/static/catalog/{fname}",
                     "at": datetime.now().strftime("%H:%M:%S"), "status": "in view",
-                    "misses": 0})
+                    "misses": 0, "seen": time.time(),
+                    "area": int(mask.sum()) if mask is not None else 0,
+                    "cx": float(xs.mean()) if len(xs) else 0.0,
+                    "cy": float(ys.mean()) if len(ys) else 0.0})
     _log(f"{name} counted in")
 
 
