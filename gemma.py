@@ -6,6 +6,7 @@ names unstable enough to invent missing instruments.
 """
 
 import base64
+import difflib
 import json
 import re
 
@@ -77,18 +78,33 @@ def inventory(frame):
     return [str(i).strip().lower() for i in items if str(i).strip()]
 
 
+def _match(name, items):
+    """Gemma does not echo names back exactly. Asked about "scissors" it will
+    happily answer "scissor", and on exact equality that item lands in neither
+    list and then gets reported present and missing at once. Map every answer
+    back onto the count-in list instead."""
+    name = re.sub(r"[^a-z0-9 ]", "", str(name).strip().lower())
+    if not name:
+        return None
+    for item in items:
+        a, b = name, item.lower()
+        if a == b or a.rstrip("s") == b.rstrip("s") or a in b or b in a:
+            return item
+    close = difflib.get_close_matches(name, [i.lower() for i in items], 1, 0.75)
+    return next((i for i in items if i.lower() == close[0]), None) if close else None
+
+
 def check_against(frame, items):
     """Ask which of `items` are gone. Returns (present, missing)."""
     listed = "\n".join(f"- {i}" for i in items)
     result = _parse(_ask(CHECK_PROMPT.format(items=listed), frame), {})
-    present = [str(i).strip().lower() for i in result.get("present", [])]
-    missing = [str(i).strip().lower() for i in result.get("missing", [])]
 
-    # Trust the count-in list over the model: anything it failed to mention
-    # is unaccounted for, which is the safe direction to fail in.
-    seen = set(present) | set(missing)
-    missing += [i for i in items if i not in seen]
-    return present, missing
+    present = {m for m in (_match(n, items) for n in result.get("present", [])) if m}
+    # Every count-in item is accounted for exactly once, and anything the model
+    # did not clearly report as still visible counts as missing. Failing that
+    # direction raises a false alarm; failing the other way loses an instrument.
+    missing = [i for i in items if i not in present]
+    return [i for i in items if i in present], missing
 
 
 HELD_PROMPT = (
