@@ -14,7 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from ultralytics import FastSAM
 
@@ -39,10 +39,12 @@ app = FastAPI()
 model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
-         "busy": False, "camera": CAMERA_INDEX, "tracking": 0}
+         "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam"}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
+_phone = None          # latest frame posted by the phone
+_phone_seen = 0.0      # when it arrived, so we can fall back if the phone drops
 
 
 def _palette(n):
@@ -101,15 +103,23 @@ def _capture_loop():
     cam = _open(current)
 
     while True:
-        if state["camera"] != current:
-            cam.release()
-            current = state["camera"]
-            cam = _open(current)
-
-        ok, frame = cam.read()
-        if not ok:
-            time.sleep(0.05)
-            continue
+        # A phone posting frames takes over; if it stops for 3s we fall back
+        # to the webcam so the demo can never end up on a frozen picture.
+        with _lock:
+            phone, age = _phone, time.time() - _phone_seen
+        if phone is not None and age < 3.0:
+            state["source"] = "phone"
+            frame = phone
+        else:
+            state["source"] = "webcam"
+            if state["camera"] != current:
+                cam.release()
+                current = state["camera"]
+                cam = _open(current)
+            ok, frame = cam.read()
+            if not ok:
+                time.sleep(0.05)
+                continue
         result = model.predict(frame, imgsz=SEG_SIZE, conf=CONF, verbose=False)[0]
         masks = _instrument_masks(result, frame.shape)
         with _lock:
@@ -182,6 +192,25 @@ def count_out():
     finally:
         state["busy"] = False
     return state
+
+
+@app.get("/phone")
+def phone_page():
+    return FileResponse("static/phone.html")
+
+
+@app.post("/ingest")
+async def ingest(request: Request):
+    """Frames posted by the phone's browser over the USB cable."""
+    global _phone, _phone_seen
+    data = await request.body()
+    frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        return {"ok": False}
+    with _lock:
+        _phone = frame
+        _phone_seen = time.time()
+    return {"ok": True}
 
 
 @app.get("/cameras")

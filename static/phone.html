@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Absent camera</title>
+<style>
+  body { margin:0; background:#0a0c10; color:#e8edf5;
+         font:16px/1.5 -apple-system,system-ui,sans-serif;
+         display:flex; flex-direction:column; height:100dvh; }
+  header { padding:14px 18px; border-bottom:1px solid #232937; }
+  h1 { margin:0; font-size:18px; }
+  #status { font-size:13px; color:#7a8699; }
+  video { flex:1; width:100%; object-fit:cover; background:#000; }
+  .bar { padding:14px 18px; display:flex; gap:10px; align-items:center; }
+  button, label.btn { flex:1; padding:14px; border-radius:8px; border:1px solid #232937;
+           background:#1d2431; color:#e8edf5; font-size:16px; font-weight:600;
+           text-align:center; }
+  .live { color:#31d0a5; }
+  .err { color:#ff4d5e; padding:0 18px 14px; font-size:14px; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Absent camera</h1>
+  <div id="status">tap start, then point at the tray</div>
+</header>
+
+<video id="v" playsinline muted autoplay></video>
+
+<div class="bar">
+  <button id="start">Start streaming</button>
+  <label class="btn" for="shot">Send one photo</label>
+  <input id="shot" type="file" accept="image/*" capture="environment">
+</div>
+<div class="err" id="err"></div>
+
+<script>
+const v = document.getElementById('v');
+const status = document.getElementById('status');
+const err = document.getElementById('err');
+const canvas = document.createElement('canvas');
+let sending = false, sent = 0;
+
+async function post(blob) {
+  await fetch('/ingest', {method:'POST', body:blob, headers:{'Content-Type':'image/jpeg'}});
+}
+
+function grabLoop() {
+  const w = v.videoWidth, h = v.videoHeight;
+  if (!w) return setTimeout(grabLoop, 100);
+  const scale = Math.min(1, 1280 / w);
+  canvas.width = w * scale; canvas.height = h * scale;
+  canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+  canvas.toBlob(async b => {
+    if (b) { await post(b); status.innerHTML = `<span class="live">streaming</span> · ${++sent} frames`; }
+    if (sending) setTimeout(grabLoop, 80);
+  }, 'image/jpeg', 0.8);
+}
+
+document.getElementById('start').onclick = async () => {
+  err.textContent = '';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    err.textContent = 'Live camera needs a secure (https) page. Use "Send one photo" instead, '
+                    + 'or open the https address.';
+    return;
+  }
+  try {
+    v.srcObject = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}}, audio: false});
+    sending = true;
+    grabLoop();
+  } catch (e) {
+    err.textContent = 'Camera blocked: ' + e.name + '. ' + e.message;
+  }
+};
+
+// Works over plain http, so it is the fallback if https will not cooperate.
+document.getElementById('shot').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  await post(f);
+  status.textContent = 'photo sent';
+};
+
+// Keep the screen awake during a demo.
+if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
+</script>
+</body>
+</html>

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 *.pt
 captures/
+cert.pem
+key.pem
