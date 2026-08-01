@@ -117,7 +117,49 @@ ollama run gemma4:e2b-it-qat "List every object as a JSON array of names. Be exa
 
 Record the result of this test here when it's run.
 
-**Result:** _(not yet run)_
+**Result (Aug 1, ~12:15 PM): mechanism PASSES. Naming accuracy on a clean tray photo
+still untested** because we only had Alex's 2023 dataset images, which are dark,
+top-down and low contrast.
+
+Run on `uncountable/images/knife/knife1/WIN_20231028_16_48_09_Pro.jpg`:
+
+| Setting | Time per image | Consistency |
+|---|---|---|
+| Defaults (thinking on) | **123 s** | crashed once, then 1 usable answer |
+| `think=false` | **1.2–1.5 s** | 3 runs, 3 *different* lists |
+| `think=false`, `temperature=0`, `seed=42` | **1.4 s** | 3 runs, **byte-identical** |
+
+### Two settings are mandatory, not optional
+
+1. **`think=false`.** Gemma 4 does a visible reasoning pass by default. That pass is
+   the entire difference between 123 s and 1.4 s per image. Leaving it on makes the
+   demo impossible.
+2. **`temperature=0` plus a fixed `seed`.** At default temperature the same image
+   gave `["paper","scissors","piece_of_paper"]`, then
+   `["paper","scissors","clipboard","clipping tool","scissors"]`, then
+   `["paper","scissors","clip","wooden floor"]`. Set difference over names that
+   unstable would invent missing instruments on every count. At temperature 0 the
+   three runs were identical.
+
+### Consequence for the architecture
+
+Do **not** run two independent inventories and diff them. Even at temperature 0 that
+is fragile, because count-out sees a different frame than count-in.
+
+Instead: at count-out, **pass the count-in list into the prompt** and ask Gemma which
+of those named items are no longer visible. Comparison against a known list is a much
+easier task than re-deriving an identical list from scratch.
+
+### Measured runtime facts
+
+- Ollama **0.32.5**, model loads at **63% CPU / 37% GPU** on the RTX 3050 Ti (4 GB).
+  Partial offload, and 1.4 s per image is still fine. Do not fight this.
+- One crash seen on a cold first call: `llama-server` died with
+  `CUDA error: shared object initialization failed`. It has not recurred. **Warm the
+  model with one throwaway call before the demo** so a cold-start crash cannot happen
+  on stage.
+- Calling through `POST http://localhost:11434/api/generate` with base64 in `images`
+  is what we tested and what works.
 
 ---
 
@@ -215,9 +257,15 @@ and our answer is good: it removes the training requirement entirely.
 
 ## Open questions
 
-- [ ] Does the go/no-go naming test pass?
+- [x] Does the go/no-go naming test pass? **Mechanism yes** (1.4 s, deterministic).
+      Accuracy on a clean 8-object tray photo is still unmeasured.
 - [ ] Does Alex's repo run unmodified? (30 min timebox — if not, build fresh)
-- [ ] Are Alex's *trained* weights in the repo, or just base yolov8m-seg.pt?
+- [x] Are Alex's *trained* weights in the repo, or just base yolov8m-seg.pt?
+      **Both.** `client/best2.pt` and `client/best4.pt` (6.4 MB each) are the
+      fine-tuned instrument weights; `yolov8m-seg.pt` (52 MB) is the base model.
+      Cloned for reference at `Projects\uncountable-reference`, deliberately kept
+      OUTSIDE this repo so no AGPL code lands here before we decide.
+      Note they also vendored a full 2-year-old copy of ultralytics into `python/`.
 - [ ] Permission from Alex — confirmed?
 - [ ] Does class-agnostic YOLO give usable boxes without a fine-tune?
 
