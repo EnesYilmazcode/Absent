@@ -83,9 +83,18 @@ video feed the whole time.
 
 - **Machine:** HP Victus 15-fb0xxx — Ryzen 7 5800H, 16 GB RAM, RTX 3050 Ti (4 GB
   VRAM), Windows 11. Disk was nearly full; cleared on build day.
-- **Model:** Gemma 4 **E4B** via Ollama. 4 GB VRAM caps us here — 12B and above will
-  not fit. E4B is ~3 GB at Q4.
-- **Endpoint:** `http://localhost:11434/v1` (OpenAI-compatible), model `gemma4:e4b`
+- **Model:** Gemma 4 **E2B, QAT quant** via Ollama — `gemma4:e2b-it-qat`.
+  - Verified sizes on the Ollama library (Aug 1, the earlier "~3 GB at Q4" note was
+    wrong): `e2b-it-qat` **4.3 GB**, `e4b-it-qat` **6.1 GB**, `e4b` (default q4_K_M)
+    **9.6 GB**, `12b-it-qat` 7.2 GB.
+  - E2B and E4B both list **Supported Modalities: Text, Image, Audio** — vision is
+    confirmed on the small variants, we do not need a 12B.
+  - Starting on E2B because 4 GB VRAM means anything over ~4 GB spills to system RAM
+    and gets slower. `e4b-it-qat` is the quality fallback if E2B misnames objects.
+- **Do NOT use `gemma3n:e2b/e4b`** — different family (Gemma 3n) and **text-only on
+  Ollama**. It cannot see images. Name collision with our E2B/E4B, easy mistake.
+- **Endpoint:** `http://localhost:11434/v1` (OpenAI-compatible), model
+  `gemma4:e2b-it-qat`
 - **Detection:** Ultralytics YOLOv8n, **CPU-only torch** — keep all VRAM for Gemma
   - `pip install ultralytics --index-url https://download.pytorch.org/whl/cpu`
 - **No cloud.** Cerebras (`gemma-4-31b`) exists as an account but is NOT used —
@@ -99,7 +108,7 @@ video feed the whole time.
 table, good lighting, no overlap. Photograph. Then run twice on the same image:
 
 ```powershell
-ollama run gemma4:e4b "List every object as a JSON array of names. Be exact, no extras." ./tray.jpg
+ollama run gemma4:e2b-it-qat "List every object as a JSON array of names. Be exact, no extras." ./tray.jpg
 ```
 
 - Both runs return the same clean list → build it
