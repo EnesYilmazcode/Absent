@@ -90,7 +90,13 @@ video feed the whole time.
   - E2B and E4B both list **Supported Modalities: Text, Image, Audio** — vision is
     confirmed on the small variants, we do not need a 12B.
   - Starting on E2B because 4 GB VRAM means anything over ~4 GB spills to system RAM
-    and gets slower. `e4b-it-qat` is the quality fallback if E2B misnames objects.
+    and gets slower.
+  - **`e4b-it-qat` is NOT a fallback. It is broken on this machine.** Tested Aug 1
+    ~12:45 PM on a real 1280x720 capture: HTTP 500 after 13 s, `llama-server process
+    has terminated: exit status 0xc0000409` (stack-based buffer overrun) with a
+    `GGML_ASSERT` failure. Reproducible, not a cold-start fluke. **E2B is the only
+    working vision model on this box. There is no quality fallback. Do not burn demo
+    time trying to switch models.**
 - **Do NOT use `gemma3n:e2b/e4b`** — different family (Gemma 3n) and **text-only on
   Ollama**. It cannot see images. Name collision with our E2B/E4B, easy mistake.
 - **Endpoint:** `http://localhost:11434/v1` (OpenAI-compatible), model
@@ -152,6 +158,19 @@ easier task than re-deriving an identical list from scratch.
 
 ### Measured runtime facts
 
+- **Latency is ~4 s per count, not 1.4 s.** The 1.4 s number was measured on a small
+  dataset image. On the frames the app actually sends (1280x720 webcam capture) E2B
+  takes **3.7–4.5 s, mean 4.0 s** over 3 runs. Still fine for a count event, but budget
+  4 s of dead UI per button press when rehearsing, and consider downscaling the frame
+  before encoding if it needs to be faster.
+- **Determinism holds at the real frame size.** Same 3 runs returned byte-identical
+  output at `temperature=0, seed=42, think=false`.
+- **No hallucination on an empty scene.** Given a webcam frame with no tray in it, E2B
+  returned `[]` under the inventory prompt. It does not invent instruments.
+- E2B wraps its JSON in a ```` ```json ```` fence. `gemma._parse` already strips this.
+- The inventory prompt says to ignore the background and E2B still emitted
+  `"background"` on a non-tray frame. Worth one prompt tightening pass if the real tray
+  run shows the same, but do not touch it until the tray run is done.
 - Ollama **0.32.5**, model loads at **63% CPU / 37% GPU** on the RTX 3050 Ti (4 GB).
   Partial offload, and 1.4 s per image is still fine. Do not fight this.
 - One crash seen on a cold first call: `llama-server` died with
