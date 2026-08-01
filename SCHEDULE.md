@@ -37,9 +37,17 @@ score. A perfect writeup submitted at 4:01 scores nothing.
 
 ## The schedule
 
-**LOCK IS 3:45, NOT 4:00.** The posted event schedule says 3:45. `CONTEXT.md` recorded a
-move to 4:00, but the board is the board. Assume 3:45 and lose nothing if it is wrong.
-There is also a **3:00 mentor check-in** that will interrupt you. Plan for it.
+**LOCK IS 4:00 PM EDT.** Settled by the Kaggle competition page itself: "Complete and
+submit your draft by the deadline: Aug 1, 2026 at 4:00 PM EDT." The 3:45 on the printed
+board is the older time. There is also a **3:00 mentor check-in** that will interrupt you.
+
+**Video length: no requirement.** The submission section names a hosted web app, an
+interactive terminal recording, or a clonable notebook, and specifies no duration. Aim for
+2 to 3 minutes, matching the live pitch.
+
+**A DRAFT IS NOT A SUBMISSION.** "Any un-submitted or draft Writeups by the hackathon
+deadline will not be considered by the Judges." Save, then Submit, top right. You can
+un-submit and re-submit as many times as you like.
 
 | Time | Who | What | Done when |
 |---|---|---|---|
