@@ -8,11 +8,12 @@ Track: On-Device Private Health
 
 ## The problem
 
-Surgical teams count instruments before a procedure and again before closing. The count is
-two people saying numbers out loud in the most distracting room in the hospital, and it
-still fails. Retained surgical items are classified as a "never event", meaning they are
-supposed to be impossible, and they happen a few thousand times a year in the US alone
-(Cima et al., *J Am Coll Surg*, 2008).
+Surgeons leave items inside patients around 6,000 times a year, and it costs about $2.4
+billion to go back in and take them out.
+
+The way we prevent it today is a count. Two people say numbers out loud, before the
+procedure and again before closing, in the most distracting room in the hospital. It is a
+memory task, and it fails.
 
 The obvious fix is a camera that watches the instrument field. The reason nobody ships one
 is that a detector only recognizes classes somebody trained it on, and no hospital has a
@@ -174,3 +175,15 @@ ground truth, top-1 name per instrument, and the confusion pairs, because we exp
 errors cluster on a few similar silhouettes. Then the metric that actually matters
 clinically: how often an instrument placed in the field never produced a card at all, since
 that is the failure that fails open.
+
+## Sources
+
+- Cima RR, et al. Incidence and characteristics of potential and actual retained foreign
+  object events in surgical patients. *Journal of the American College of Surgeons*, 2008.
+  https://pubmed.ncbi.nlm.nih.gov/18589366/
+- [Uncountable](https://github.com/gulkoa/uncountable), Alex Gulko and David Novikov, 1st
+  place HackOHI/O 2023. AGPL-3.0.
+- [Gemma 4](https://ai.google.dev/gemma), Google DeepMind. Run locally through
+  [Ollama](https://ollama.com).
+- [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) via
+  [Ultralytics](https://github.com/ultralytics/ultralytics).
