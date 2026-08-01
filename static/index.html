@@ -41,6 +41,9 @@
   .alert h2 { color:var(--bad); }
   .empty { color:var(--dim); font-size:14px; }
   .clear { color:var(--ok); font-weight:600; }
+  .cross { font-size:13px; color:var(--dim); margin-bottom:10px; }
+  .cross.disagree { color:#ffc44d; }
+  .stamp { color:var(--dim); font-size:12px; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -64,6 +67,7 @@
     </div>
     <div class="panel">
       <h2>Counted in</h2>
+      <div id="crosscheck" class="cross" hidden></div>
       <ul id="list-in"><li class="empty">nothing counted yet</li></ul>
     </div>
     <div class="panel" id="result-panel" hidden>
@@ -84,6 +88,18 @@ function render(s) {
   $('list-in').innerHTML = s.count_in.length
     ? s.count_in.map(i => `<li>${i}</li>`).join('')
     : '<li class="empty">nothing counted yet</li>';
+
+  // Gemma names, FastSAM counts shapes. They fail differently, so say when
+  // they disagree instead of quietly trusting one of them.
+  const cross = $('crosscheck');
+  cross.hidden = s.stage === 'idle';
+  if (!cross.hidden) {
+    const gap = s.segmented - s.named;
+    cross.className = 'cross' + (Math.abs(gap) > 1 ? ' disagree' : '');
+    cross.textContent = `Gemma named ${s.named} · segmentation saw ${s.segmented}`
+      + (Math.abs(gap) > 1 ? ' · check the zone' : '')
+      + (s.at_in ? ` · counted in ${s.at_in}` : '');
+  }
 
   const panel = $('result-panel');
   if (s.stage !== 'counted_out') { panel.hidden = true; return; }

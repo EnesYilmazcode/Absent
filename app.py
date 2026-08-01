@@ -63,7 +63,8 @@ model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
          "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam",
-         "roi": dict(ROI), "error": ""}
+         "roi": dict(ROI), "error": "", "named": 0, "segmented": 0,
+         "at_in": "", "at_out": ""}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
@@ -279,9 +280,15 @@ def get_state():
 def count_in():
     state["busy"] = True
     try:
+        seen = state["tracking"]
         items = gemma.inventory(_snapshot("count_in"))
+        # Two independent signals: FastSAM counts shapes, Gemma names things.
+        # They are wrong in different ways, so a disagreement is worth showing
+        # rather than hiding. This is the cheapest guard against Gemma quietly
+        # under-listing the tray at count-in.
         state.update(stage="counted_in", count_in=items, present=[], missing=[],
-                     error="")
+                     error="", named=len(items), segmented=seen,
+                     at_in=datetime.now().strftime("%H:%M:%S"))
     except Exception as e:                      # never 500 mid-demo
         state["error"] = f"{type(e).__name__}: {e}"[:120]
     finally:
@@ -296,7 +303,8 @@ def count_out():
     state["busy"] = True
     try:
         present, missing = gemma.check_against(_snapshot("count_out"), state["count_in"])
-        state.update(stage="counted_out", present=present, missing=missing, error="")
+        state.update(stage="counted_out", present=present, missing=missing, error="",
+                     at_out=datetime.now().strftime("%H:%M:%S"))
     except Exception as e:
         state["error"] = f"{type(e).__name__}: {e}"[:120]
     finally:
@@ -450,7 +458,8 @@ def set_source(url: str):
 
 @app.post("/reset")
 def reset():
-    state.update(stage="idle", count_in=[], present=[], missing=[])
+    state.update(stage="idle", count_in=[], present=[], missing=[], error="",
+                 named=0, segmented=0, at_in="", at_out="")
     return state
 
 

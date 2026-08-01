@@ -9,6 +9,7 @@ import base64
 import difflib
 import json
 import re
+from collections import Counter
 
 import cv2
 import requests
@@ -21,11 +22,12 @@ TIMEOUT = 120
 # Do not say "tray". Asked about a tray, E2B returns [] whenever it cannot see
 # a literal surgical tray, which is every frame of our demo.
 INVENTORY_PROMPT = (
-    "List every distinct portable object visible in this image as a JSON array "
+    "List every portable object visible in this image as a JSON array "
     "of short lowercase names. Include tools, instruments, containers and small "
     "items lying on the surface. Do not list the surface itself, the table, the "
     "floor, walls, furniture, people, hands or clothing. "
-    "Use one name per object. Reply with the JSON array only."
+    "Count duplicates: if two of the same object are present, write the name "
+    "twice. Reply with the JSON array only."
 )
 
 CHECK_PROMPT = (
@@ -33,7 +35,8 @@ CHECK_PROMPT = (
     "Look at the image and decide which of those items are still visible.\n"
     'Reply with JSON only, in the form {{"present": [...], "missing": [...]}}, '
     "using the item names exactly as written above and listing every item in "
-    "one of the two lists."
+    "one of the two lists. If an item was listed twice above and only one is "
+    "visible, write it once in present and once in missing."
 )
 
 
@@ -99,12 +102,20 @@ def check_against(frame, items):
     listed = "\n".join(f"- {i}" for i in items)
     result = _parse(_ask(CHECK_PROMPT.format(items=listed), frame), {})
 
-    present = {m for m in (_match(n, items) for n in result.get("present", [])) if m}
-    # Every count-in item is accounted for exactly once, and anything the model
-    # did not clearly report as still visible counts as missing. Failing that
-    # direction raises a false alarm; failing the other way loses an instrument.
-    missing = [i for i in items if i not in present]
-    return [i for i in items if i in present], missing
+    # Counted, not set-membership. Two clamps go in, one comes out, and a set
+    # diff reports all clear while an instrument is still inside the patient.
+    outstanding = Counter(items)
+    present = []
+    for answer in result.get("present", []):
+        name = _match(answer, [i for i in outstanding if outstanding[i]])
+        if name:
+            outstanding[name] -= 1
+            present.append(name)
+
+    # Anything not clearly reported as still visible counts as missing. Failing
+    # that way raises a false alarm; the other way loses an instrument.
+    missing = list(outstanding.elements())
+    return present, missing
 
 
 HELD_PROMPT = (
