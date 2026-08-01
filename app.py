@@ -4,6 +4,7 @@ YOLOv8 segments the tray continuously so the feed looks live. Gemma 4 only
 fires on a count event, which is also how real surgical counts work.
 """
 
+import os
 import threading
 import time
 from datetime import datetime
@@ -17,7 +18,7 @@ from ultralytics import YOLO
 
 import gemma
 
-CAMERA_INDEX = 0
+CAMERA_INDEX = int(os.environ.get("ABSENT_CAMERA", 0))
 FRAME_W, FRAME_H = 1280, 720
 YOLO_SIZE = 448
 CONF = 0.25
@@ -28,7 +29,8 @@ CAPTURES.mkdir(exist_ok=True)
 app = FastAPI()
 model = YOLO("yolov8n-seg.pt")
 
-state = {"stage": "idle", "count_in": [], "present": [], "missing": [], "busy": False}
+state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
+         "busy": False, "camera": CAMERA_INDEX}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
@@ -63,15 +65,26 @@ def _overlay(frame, result):
     return out
 
 
-def _capture_loop():
-    global _raw, _annotated
-    cam = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+def _open(index):
+    cam = cv2.VideoCapture(index, cv2.CAP_DSHOW)
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
-    if not cam.isOpened():
-        raise RuntimeError(f"camera {CAMERA_INDEX} would not open")
+    return cam
+
+
+def _capture_loop():
+    """Watches state['camera'] so the iPhone virtual webcam can be selected
+    from the UI without restarting the server mid-demo."""
+    global _raw, _annotated
+    current = state["camera"]
+    cam = _open(current)
 
     while True:
+        if state["camera"] != current:
+            cam.release()
+            current = state["camera"]
+            cam = _open(current)
+
         ok, frame = cam.read()
         if not ok:
             time.sleep(0.05)
@@ -145,6 +158,27 @@ def count_out():
         state.update(stage="counted_out", present=present, missing=missing)
     finally:
         state["busy"] = False
+    return state
+
+
+@app.get("/cameras")
+def cameras():
+    """Probe the first few indices so we can find whichever one the iPhone
+    virtual webcam landed on."""
+    found = []
+    for i in range(5):
+        cam = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if cam.isOpened():
+            ok, frame = cam.read()
+            if ok:
+                found.append({"index": i, "w": frame.shape[1], "h": frame.shape[0]})
+        cam.release()
+    return found
+
+
+@app.post("/camera/{index}")
+def set_camera(index: int):
+    state["camera"] = index
     return state
 
 
