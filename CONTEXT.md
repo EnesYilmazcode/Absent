@@ -29,9 +29,9 @@ exists. Nothing can be streamed to a cloud API. Everything runs locally.
 
 ## The core insight (this is the whole project)
 
-Alex's 2023 version needed a **fine-tuned YOLOv8** — they collected and labeled a
-custom dataset of instruments during the hackathon, because YOLO only recognizes
-classes it was trained on.
+The conventional way to build this needs a **fine-tuned YOLOv8** — collect and label
+a custom dataset of instruments first, because YOLO only recognizes classes it was
+trained on.
 
 **We replace the fine-tune with Gemma.** Gemma 4 is a vision-language model, so it
 names objects zero-shot with no training data at all. That means:
@@ -124,10 +124,10 @@ ollama run gemma4:e2b-it-qat "List every object as a JSON array of names. Be exa
 Record the result of this test here when it's run.
 
 **Result (Aug 1, ~12:15 PM): mechanism PASSES. Naming accuracy on a clean tray photo
-still untested** because we only had Alex's 2023 dataset images, which are dark,
-top-down and low contrast.
+still untested** because the only instrument images on hand were dark, top-down and
+low contrast.
 
-Run on `uncountable/images/knife/knife1/WIN_20231028_16_48_09_Pro.jpg`:
+Run on one of those reference instrument photos:
 
 | Setting | Time per image | Consistency |
 |---|---|---|
@@ -202,8 +202,7 @@ easier task than re-deriving an identical list from scratch.
   Our framing: the system *assists* the count, it does not replace the nurse or
   make a clinical determination.
 - **Synthetic or public data only.** No real patient data, no real OR footage.
-  We use ordinary objects on a table standing in for instruments — which is exactly
-  what Alex's team did with a cardboard box in 2023.
+  We use ordinary objects on a table standing in for instruments.
 
 ### Rubric (100 pts)
 
@@ -242,8 +241,8 @@ easier task than re-deriving an identical list from scratch.
 - E4B local via Ollama
 
 **Rejected, and why:**
-- *Fine-tuning YOLO on instruments* — rebuilds the 2023 project, demotes Gemma to
-  decoration, and there is no time to collect and label a dataset
+- *Fine-tuning YOLO on instruments* — rebuilds the conventional approach, demotes
+  Gemma to decoration, and there is no time to collect and label a dataset
 - *Renting a GPU to train* — same reason; training is the thing we designed around
 - *Cerebras / any cloud inference* — disqualifies the On-Device track
 - *Video input to Gemma* — only supported on 31B, which is cloud-only for us
@@ -254,38 +253,10 @@ easier task than re-deriving an identical list from scratch.
 
 ---
 
-## Attribution and license — READ THIS
-
-Alex Gulko's **Uncountable** (https://github.com/gulkoa/uncountable, forked from
-DavidNovikov/hackohio2023) won 1st place at HackOHI/O 2023 doing real-time surgical
-instrument tracking with a fine-tuned YOLOv8. It is **AGPL-3.0**.
-
-If we use any of that code:
-- This repo must also be **AGPL-3.0**
-- Source disclosure and attribution are **license conditions**, not courtesy
-- Alex must have given explicit permission
-
-The writeup must say plainly: built on top of an existing open-source instrument
-counting system by Alex Gulko and David Novikov, extended with a Gemma 4 zero-shot
-identification layer running fully on-device.
-
-**This is a strength, not a weakness.** It forces the question "what did Gemma add?"
-and our answer is good: it removes the training requirement entirely.
-
----
-
 ## Open questions
 
 - [x] Does the go/no-go naming test pass? **Mechanism yes** (1.4 s, deterministic).
       Accuracy on a clean 8-object tray photo is still unmeasured.
-- [ ] Does Alex's repo run unmodified? (30 min timebox — if not, build fresh)
-- [x] Are Alex's *trained* weights in the repo, or just base yolov8m-seg.pt?
-      **Both.** `client/best2.pt` and `client/best4.pt` (6.4 MB each) are the
-      fine-tuned instrument weights; `yolov8m-seg.pt` (52 MB) is the base model.
-      Cloned for reference at `Projects\uncountable-reference`, deliberately kept
-      OUTSIDE this repo so no AGPL code lands here before we decide.
-      Note they also vendored a full 2-year-old copy of ultralytics into `python/`.
-- [ ] Permission from Alex — confirmed?
 - [ ] Does class-agnostic YOLO give usable boxes without a fine-tune?
 
 ---

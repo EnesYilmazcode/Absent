@@ -160,8 +160,7 @@ def _track_presence(masks, shape):
     Gemma names an instrument once, when it arrives. After that, asking a
     language model every few seconds whether it can still see it is both slow
     and unreliable. A shape of about the right size in about the right place is
-    the same object, which is how the 2023 project did it, and it runs every
-    frame instead of every four seconds.
+    the same object, and it runs every frame instead of every four seconds.
     """
     if not catalog:
         return

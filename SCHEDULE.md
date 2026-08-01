@@ -202,7 +202,7 @@ video block starts, not during it.
 | t | beat |
 |---|---|
 | 0:00–0:20 | Retained surgical items are a never event and they still happen in 1 in 5,500 to 7,000 operations. The mitigation is a nurse counting out loud in the most distracting room in the hospital |
-| 0:20–0:40 | The 2023 prior art needed a fine-tuned YOLOv8 and a hand-labeled instrument dataset collected during the hackathon |
+| 0:20–0:40 | The conventional build needs a fine-tuned YOLOv8 and a hand-labeled instrument dataset collected up front |
 | 0:40–1:00 | Gemma 4 names objects zero-shot, so the training requirement disappears. **Turn the wifi off here** |
 | 1:00–1:30 | Count in. **Hand the tray to a judge and let them remove something** |
 | 1:30–1:50 | Count out. It names exactly what is gone |

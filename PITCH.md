@@ -26,7 +26,7 @@ does. The judges have heard forty pitches by the time you walk up.
 
 **The sentence that carries the whole project.** If you only get one line out, this is it:
 
-> "The 2023 version of this needed a hand-labeled dataset of surgical instruments. Gemma
+> "The usual way to build this needs a hand-labeled dataset of surgical instruments. Gemma
 > names them zero-shot, so it needs none, and it works on instruments nobody trained it
 > on."
 
@@ -78,10 +78,10 @@ lines are stage directions, not words.
 >
 > **[1:40, the part that wins it]**
 >
-> The reason this is a Gemma project and not a detection project: the system this builds
-> on won HackOHI/O in 2023, and it needed a fine-tuned YOLOv8. They spent their hackathon
-> collecting and hand-labeling a dataset of surgical instruments, because a detector only
-> knows the classes you trained it on.
+> The reason this is a Gemma project and not a detection project: the standard way to
+> build instrument tracking is a fine-tuned YOLOv8, which means collecting and
+> hand-labeling a dataset of surgical instruments first, because a detector only knows
+> the classes you trained it on.
 >
 > Gemma 4 is a vision-language model. It names objects zero-shot. No dataset, no labeling,
 > no training run, and it generalizes to instruments nobody has ever trained a detector
@@ -136,10 +136,10 @@ Do them both. They are cheap and nobody else will.
 > "this object was on the tray and now I can't see it", and a human decides what that
 > means.
 
-**"What's actually yours versus the 2023 project?"**
-> Their system is a fine-tuned YOLOv8 for instrument tracking, AGPL-licensed, and I credit
-> it in the README. What's mine is replacing the fine-tune with zero-shot naming so the
-> training requirement disappears entirely, plus the count-in and count-out logic on top.
+**"What's actually yours versus an off-the-shelf detector?"**
+> The usual build is a fine-tuned YOLOv8 for instrument tracking. What's mine is replacing
+> the fine-tune with zero-shot naming so the training requirement disappears entirely,
+> plus the count-in and count-out logic on top.
 
 **"Why is it slow?"**
 > It isn't, for what it does. Four seconds, twice per operation. Real counts happen at

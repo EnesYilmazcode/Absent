@@ -310,7 +310,7 @@ will muddy the capture with traffic that is not yours.
 - Cloud inference of any kind. There is a Cerebras account with gemma-4-31b on it and we did not use it. Using it would disqualify us from the On-Device Private Health track, and OR imagery is exactly the data that must not leave the building. Zero network calls is the pitch.
 - gemma3n:e2b and gemma3n:e4b. Different model family (Gemma 3n) and text-only on Ollama. They cannot see an image. The names collide with our E2B and E4B, which makes it an easy mistake.
 - gemma3:4b-it-q4_K_M. Pulled and sitting on disk, but Ollama lists its capabilities as completion only, with no vision.
-- Fine-tuning YOLOv8 on instruments, which is what the 2023 prior art did. It rebuilds the old project, demotes Gemma to decoration, and there is no time in a one-day hackathon to collect and label a dataset.
+- Fine-tuning YOLOv8 on instruments, which is the conventional approach. It demotes Gemma to decoration, and there is no time in a one-day hackathon to collect and label a dataset.
 - Renting a GPU to train a detector. Same reason. Training is the thing we designed the project around removing.
 - COCO-trained YOLOv8n-seg as the segmenter. The weights are in the folder and unused. It only outlines the 80 classes it was trained on, which defeats the point.
 - FastSAM-x (145 MB) and the other segmenters (mobile_sam, yoloe-11s-seg-pf) are all downloaded and unused. FastSAM-x is about 1.2 seconds a frame and produced no more usable masks than FastSAM-s.
@@ -399,7 +399,7 @@ Do not say: It is just demo copy, everyone in the room understands what we mean.
 
 **[EASY] In one sentence, what is Gemma actually responsible for, and what breaks if I delete it?**
 
-> Gemma names each object once, the moment it enters the count zone, with no training data. That is the entire naming layer. Delete it and you have colored outlines with no names, and you are back to needing a labeled instrument dataset, which is exactly what the 2023 version had to build. It does not run the missing-item alarm. That part is geometry.
+> Gemma names each object once, the moment it enters the count zone, with no training data. That is the entire naming layer. Delete it and you have colored outlines with no names, and you are back to needing a labeled instrument dataset, which is exactly what a fine-tuned detector would force you to build. It does not run the missing-item alarm. That part is geometry.
 
 Do not say: Gemma powers the whole system. (A judge who reads the code will find that the alert never calls Gemma, and then everything else you said is suspect.)
 

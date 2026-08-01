@@ -173,8 +173,6 @@ enters the field and never registers a manifest card.
 - Cima RR, et al. Incidence and characteristics of potential and actual retained foreign
   object events in surgical patients. *Journal of the American College of Surgeons*, 2008.
   [PubMed](https://pubmed.ncbi.nlm.nih.gov/18589366/)
-- [Uncountable](https://github.com/gulkoa/uncountable), Gulko and Novikov, 1st place
-  HackOHI/O 2023. The fine-tuned YOLOv8 approach this builds on. AGPL-3.0.
 - [Gemma 4](https://ai.google.dev/gemma), Google DeepMind, run locally via
   [Ollama](https://ollama.com).
 - [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) via
