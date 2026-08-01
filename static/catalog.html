@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absent - instrument catalog</title>
+<style>
+  :root { --bg:#0a0c10; --panel:#141820; --line:#232937; --dim:#7a8699; --ok:#31d0a5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#e8edf5;
+         font:16px/1.5 -apple-system,Segoe UI,system-ui,sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:22px; letter-spacing:-0.02em; }
+  .tag { color:var(--dim); font-size:14px; }
+  .offline { margin-left:auto; color:var(--ok); font-size:13px;
+             border:1px solid var(--ok); border-radius:99px; padding:3px 12px; }
+  main { display:grid; grid-template-columns:1fr 360px; gap:22px; padding:22px 28px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  #feed { max-width:100%; max-height:46dvh; border-radius:10px;
+          border:1px solid var(--line); display:block; margin:0 auto; }
+  .side { display:flex; flex-direction:column; gap:10px; }
+  button { padding:14px; border-radius:8px; border:1px solid var(--line);
+           background:#1d2431; color:#e8edf5; font-size:16px; font-weight:600;
+           cursor:pointer; }
+  button:hover:not(:disabled) { background:#273041; }
+  button:disabled { opacity:.4; cursor:default; }
+  #add { background:var(--ok); border-color:var(--ok); color:#06231b; }
+  #msg { color:var(--dim); font-size:14px; min-height:22px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.08em;
+       color:var(--dim); margin:26px 28px 0; }
+  .roll { display:grid; gap:14px; padding:14px 28px 40px;
+          grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          overflow:hidden; }
+  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block;
+              background:#000; }
+  .card .name { padding:10px 12px 4px; font-weight:600; font-size:15px;
+                text-transform:capitalize; }
+  .card .at { padding:0 12px 12px; color:var(--dim); font-size:12px; }
+  .empty { color:var(--dim); padding:0 28px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Instrument catalog</h1>
+  <span class="tag">hold each tool up, one at a time</span>
+  <span class="offline">on-device &middot; no network</span>
+</header>
+
+<main>
+  <img id="feed" src="/feed" alt="camera">
+  <div class="side">
+    <button id="add">Add what I'm holding</button>
+    <button id="clear">Clear catalog</button>
+    <div id="msg"></div>
+  </div>
+</main>
+
+<h2 id="count">Catalog</h2>
+<div class="roll" id="roll"></div>
+<div class="empty" id="empty">Nothing catalogued yet. Hold a tool up and press add.</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function render(items) {
+  $('count').textContent = items.length ? `Catalog · ${items.length} items` : 'Catalog';
+  $('empty').style.display = items.length ? 'none' : 'block';
+  $('roll').innerHTML = items.map(i => `
+    <div class="card">
+      <img src="${i.file}" alt="${i.name}">
+      <div class="name">${i.name}</div>
+      <div class="at">${i.at}${i.segmented ? ' · segmented' : ''}</div>
+    </div>`).join('');
+}
+
+async function refresh() { render(await (await fetch('/catalog/items')).json()); }
+
+$('add').onclick = async () => {
+  $('add').disabled = true;
+  $('msg').textContent = 'looking…';
+  const r = await (await fetch('/catalog/add', {method:'POST'})).json();
+  $('msg').textContent = r.ok ? `added ${r.item.name}` : r.error;
+  await refresh();
+  $('add').disabled = false;
+};
+
+$('clear').onclick = async () => {
+  await fetch('/catalog/clear', {method:'POST'});
+  $('msg').textContent = 'cleared';
+  await refresh();
+};
+
+refresh();
+</script>
+</body>
+</html>

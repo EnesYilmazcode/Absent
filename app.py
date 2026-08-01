@@ -7,6 +7,7 @@ fires on a count event, which is also how real surgical counts work.
 """
 
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -16,6 +17,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from ultralytics import FastSAM
 
 import gemma
@@ -41,6 +43,7 @@ CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
@@ -48,8 +51,13 @@ state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
 _lock = threading.Lock()
 _raw = None
 _annotated = None
+_masks = []
 _phone = None          # latest frame posted by the phone
 _phone_seen = 0.0      # when it arrived, so we can fall back if the phone drops
+
+CATALOG = Path("static/catalog")
+CATALOG.mkdir(parents=True, exist_ok=True)
+catalog = []           # [{name, file, at}], the running instrument roll
 
 
 def _palette(n):
@@ -119,7 +127,7 @@ def _open(source):
 def _capture_loop():
     """Watches state['camera'] so the iPhone virtual webcam can be selected
     from the UI without restarting the server mid-demo."""
-    global _raw, _annotated
+    global _raw, _annotated, _masks
     current = state["camera"]
     cam = _open(current)
 
@@ -145,6 +153,7 @@ def _capture_loop():
         masks = _instrument_masks(result, frame.shape)
         with _lock:
             _raw = frame
+            _masks = masks
             _annotated = _overlay(frame, masks)
             state["tracking"] = len(masks)
 
@@ -229,6 +238,75 @@ def identify():
         return {"name": "no camera frame yet"}
     started = time.time()
     return {"name": gemma.identify_held(frame), "seconds": round(time.time() - started, 1)}
+
+
+def _held_mask(masks, shape):
+    """The object being held up is the one nearest the middle of the frame."""
+    if not masks:
+        return None
+    cy, cx = shape[0] / 2, shape[1] / 2
+    best, best_d = None, None
+    for m in masks:
+        ys, xs = np.nonzero(m)
+        d = (ys.mean() - cy) ** 2 + (xs.mean() - cx) ** 2
+        if best_d is None or d < best_d:
+            best, best_d = m, d
+    return best
+
+
+def _cutout(frame, mask):
+    """Crop to the mask and fade everything around it, so a catalog card shows
+    the instrument rather than whatever was behind it."""
+    ys, xs = np.nonzero(mask)
+    pad = int(0.08 * max(ys.ptp(), xs.ptp()) + 8)
+    y1, y2 = max(0, ys.min() - pad), min(frame.shape[0], ys.max() + pad)
+    x1, x2 = max(0, xs.min() - pad), min(frame.shape[1], xs.max() + pad)
+
+    crop = frame[y1:y2, x1:x2].copy()
+    m = mask[y1:y2, x1:x2]
+    crop[~m] = (crop[~m] * 0.25).astype("uint8")
+    return crop
+
+
+@app.get("/catalog")
+def catalog_page():
+    return FileResponse("static/catalog.html")
+
+
+@app.get("/catalog/items")
+def catalog_items():
+    return catalog
+
+
+@app.post("/catalog/add")
+def catalog_add():
+    with _lock:
+        frame = None if _raw is None else _raw.copy()
+        masks = list(_masks)
+    if frame is None:
+        return {"ok": False, "error": "no camera frame yet"}
+
+    name = gemma.identify_held(frame)
+    if name in ("none", ""):
+        return {"ok": False, "error": "hold the item up to the camera"}
+
+    mask = _held_mask(masks, frame.shape)
+    thumb = _cutout(frame, mask) if mask is not None else frame
+    fname = f"{len(catalog):02d}_{re.sub(r'[^a-z0-9]+', '-', name).strip('-')}.jpg"
+    cv2.imwrite(str(CATALOG / fname), thumb)
+
+    entry = {"name": name, "file": f"/static/catalog/{fname}",
+             "at": datetime.now().strftime("%H:%M:%S"), "segmented": mask is not None}
+    catalog.append(entry)
+    return {"ok": True, "item": entry, "count": len(catalog)}
+
+
+@app.post("/catalog/clear")
+def catalog_clear():
+    catalog.clear()
+    for f in CATALOG.glob("*.jpg"):
+        f.unlink()
+    return {"ok": True}
 
 
 @app.get("/phone")
