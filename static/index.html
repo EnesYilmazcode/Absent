@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -69,12 +69,10 @@
 <body>
 
 <div class="stage">
-  <img id="feed" src="/feed" alt="instrument field">
+  <img id="feed" alt="instrument field">
   <div class="wordmark"><b>Absent</b><span>on-device &middot; no network</span></div>
-  <div id="msg">Drag on the video to set the count zone</div>
+  <div id="msg">watching</div>
   <div class="controls">
-    <button id="add">Add item</button>
-    <button id="verify">Count</button>
     <button id="clear">Reset</button>
   </div>
 </div>
@@ -86,47 +84,42 @@
     <div class="sub" id="cross"></div>
   </div>
   <div class="cards" id="cards">
-    <div class="none">Hold an instrument up to the camera and press Add.</div>
+    <div class="none">Watching.</div>
   </div>
   <div class="banner" id="banner" hidden></div>
 </aside>
 
 <script>
 const $ = id => document.getElementById(id);
-const busy = on => ['add','verify','clear'].forEach(b => $(b).disabled = on);
 
 function render(items, state) {
   $('count').textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
   $('cards').innerHTML = items.length ? items.map(i => `
-    <div class="card ${i.status === 'unaccounted for' ? 'gone'
-                     : i.status === 'accounted for' ? 'ok' : ''}">
+    <div class="card ${i.status === 'inside' ? 'gone' : 'ok'}">
       <img src="${i.file}" alt="${i.name}">
       <div class="meta">
         <div class="name">${i.name}</div>
-        <div class="status">${i.status} &middot; ${i.at}</div>
+        <div class="status">${i.status === 'inside' ? 'inside the patient'
+                                                    : 'accounted for'} &middot; ${i.at}</div>
       </div>
     </div>`).join('')
-    : '<div class="none">Hold an instrument up to the camera and press Add.</div>';
+    : '<div class="none">Watching. Bring an instrument into view and it is '
+      + 'named and counted automatically.</div>';
 
-  const gone = items.filter(i => i.status === 'unaccounted for');
+  const gone = items.filter(i => i.status === 'inside');
   const banner = $('banner');
-  banner.hidden = !items.length || items.every(i => i.status === 'counted in');
+  banner.hidden = !items.length;
   banner.className = 'banner ' + (gone.length ? 'bad' : 'good');
   banner.textContent = gone.length
     ? `${gone.length} unaccounted for: ${gone.map(i => i.name).join(', ')}`
     : 'All items accounted for';
 
   // Two independent signals: Gemma names, segmentation counts shapes.
-  const cross = $('cross');
-  if (state && state.stage === 'counted_out') {
-    const gap = Math.abs(state.segmented - state.named);
-    cross.className = 'sub' + (gap > 1 ? ' disagree' : '');
-    cross.textContent = `named ${state.named} · segmentation saw ${state.segmented}`
-                      + (state.at_out ? ` · ${state.at_out}` : '');
-  } else {
-    cross.className = 'sub';
-    cross.textContent = 'nothing counted yet';
-  }
+  const gap = Math.abs(state.tracking - items.filter(i => i.status !== 'inside').length);
+  $('cross').className = 'sub' + (gap > 1 ? ' disagree' : '');
+  $('cross').textContent = `segmentation sees ${state.tracking} · ${state.fps || 0} fps`;
+  $('msg').textContent = state.error ? state.error
+                       : state.busy ? 'naming what it sees...' : 'watching';
 }
 
 async function refresh() {
@@ -136,28 +129,22 @@ async function refresh() {
   render(items, state);
 }
 
-$('add').onclick = async () => {
-  busy(true); $('msg').textContent = 'naming and segmenting…';
-  const r = await (await fetch('/catalog/add', {method:'POST'})).json();
-  $('msg').textContent = r.ok ? `added ${r.item.name}` : r.error;
-  await refresh(); busy(false);
-};
-
-$('verify').onclick = async () => {
-  busy(true); $('msg').textContent = 'counting…';
-  const r = await (await fetch('/verify', {method:'POST'})).json();
-  const st = await (await fetch('/state')).json();
-  $('msg').textContent = r.ok ? 'count complete'
-                              : (st.error || r.error || 'count failed');
-  await refresh(); busy(false);
-};
-
 $('clear').onclick = async () => {
-  busy(true);
+  $('clear').disabled = true;
   await fetch('/catalog/clear', {method:'POST'});
-  $('msg').textContent = 'cleared';
-  await refresh(); busy(false);
+  await refresh();
+  $('clear').disabled = false;
 };
+
+// Poll single frames instead of an MJPEG stream. A dropped MJPEG connection
+// leaves a black screen forever; this recovers on the very next request.
+(function video() {
+  const img = $('feed'), buf = new Image();
+  buf.onload = () => { img.src = buf.src; setTimeout(tick, 90); };
+  buf.onerror = () => setTimeout(tick, 400);
+  function tick() { buf.src = '/frame.jpg?t=' + Date.now(); }
+  tick();
+})();
 
 // Drag anywhere on the video to redraw the count zone. Stored as fractions so
 // it stays correct whatever resolution the phone or webcam is sending.
@@ -182,7 +169,7 @@ feed.addEventListener('pointerup', async e => {
 });
 
 refresh();
-setInterval(() => { if (!$('add').disabled) refresh(); }, 2000);
+setInterval(refresh, 400);
 </script>
 </body>
 </html>

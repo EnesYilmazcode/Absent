@@ -5,88 +5,96 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Absent camera</title>
 <style>
-  body { margin:0; background:#0a0c10; color:#e8edf5;
-         font:16px/1.5 -apple-system,system-ui,sans-serif;
-         display:flex; flex-direction:column; height:100dvh; }
-  header { padding:14px 18px; border-bottom:1px solid #232937; }
-  h1 { margin:0; font-size:18px; }
-  #status { font-size:13px; color:#7a8699; }
-  video { flex:1; width:100%; object-fit:cover; background:#000; }
-  .bar { padding:14px 18px; display:flex; gap:10px; align-items:center; }
-  button, label.btn { flex:1; padding:14px; border-radius:8px; border:1px solid #232937;
-           background:#1d2431; color:#e8edf5; font-size:16px; font-weight:600;
-           text-align:center; }
-  .live { color:#31d0a5; }
-  .err { color:#ff4d5e; padding:0 18px 14px; font-size:14px; }
-  input[type=file] { display:none; }
+  body { margin:0; background:#000; color:#e8edf5; overflow:hidden;
+         font:15px/1.4 -apple-system,system-ui,sans-serif;
+         height:100dvh; display:flex; flex-direction:column; }
+  .wrap { position:relative; flex:1; min-height:0; }
+  video { width:100%; height:100%; object-fit:cover; display:block; background:#000; }
+
+  /* the count zone, drawn where the laptop says it is */
+  #zone { position:absolute; border:2px solid #fff; border-radius:2px;
+          box-shadow:0 0 0 9999px rgba(0,0,0,.34); pointer-events:none; }
+
+  .hud { position:absolute; top:calc(env(safe-area-inset-top) + 10px); left:14px;
+         right:14px; display:flex; justify-content:space-between;
+         font-size:13px; text-shadow:0 1px 6px #000; pointer-events:none; }
+  .live { color:#31d0a5; font-weight:600; }
+  .err { color:#ff4d5e; }
+  #tap { position:absolute; inset:0; display:flex; align-items:center;
+         justify-content:center; background:rgba(0,0,0,.72); font-size:19px;
+         font-weight:600; text-align:center; padding:30px; }
+  #tap[hidden] { display:none; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Absent camera</h1>
-  <div id="status">tap start, then point at the tray</div>
-</header>
-
-<video id="v" playsinline muted autoplay></video>
-
-<div class="bar">
-  <button id="start">Start streaming</button>
-  <label class="btn" for="shot">Send one photo</label>
-  <input id="shot" type="file" accept="image/*" capture="environment">
+<div class="wrap">
+  <video id="v" playsinline muted autoplay></video>
+  <div id="zone" hidden></div>
+  <div class="hud"><span id="status">starting camera…</span><span id="err"></span></div>
+  <div id="tap" hidden>Tap to start the camera</div>
 </div>
-<div class="err" id="err"></div>
 
 <script>
 const v = document.getElementById('v');
 const status = document.getElementById('status');
-const err = document.getElementById('err');
+const errEl = document.getElementById('err');
+const zone = document.getElementById('zone');
 const canvas = document.createElement('canvas');
-let sending = false, sent = 0;
+let sent = 0;
 
 async function post(blob) {
-  await fetch('/ingest', {method:'POST', body:blob, headers:{'Content-Type':'image/jpeg'}});
+  await fetch('/ingest', {method:'POST', body:blob,
+                          headers:{'Content-Type':'image/jpeg'}});
 }
 
 function grabLoop() {
   const w = v.videoWidth, h = v.videoHeight;
-  if (!w) return setTimeout(grabLoop, 100);
-  // Cap the longest side. A phone held upright sends 1080x1920 otherwise,
-  // which is slow to segment and stretches the laptop page into a ribbon.
+  if (!w) return setTimeout(grabLoop, 120);
+  // Cap the longest side: a phone upright otherwise sends 1080x1920, which is
+  // slow to segment and stretches the laptop page.
   const scale = Math.min(1, 1280 / Math.max(w, h));
   canvas.width = w * scale; canvas.height = h * scale;
   canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
   canvas.toBlob(async b => {
-    if (b) { await post(b); status.innerHTML = `<span class="live">streaming</span> · ${++sent} frames`; }
-    if (sending) setTimeout(grabLoop, 80);
+    if (b) {
+      try { await post(b); status.innerHTML =
+              `<span class="live">streaming</span> · ${++sent} frames`; }
+      catch (e) { status.textContent = 'reconnecting…'; }
+    }
+    setTimeout(grabLoop, 80);            // never stops; a failure just retries
   }, 'image/jpeg', 0.8);
 }
 
-document.getElementById('start').onclick = async () => {
-  err.textContent = '';
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    err.textContent = 'Live camera needs a secure (https) page. Use "Send one photo" instead, '
-                    + 'or open the https address.';
-    return;
-  }
+// Mirror the laptop's count zone so the camera operator can aim.
+async function drawZone() {
+  try {
+    const r = (await (await fetch('/state')).json()).roi;
+    const box = v.getBoundingClientRect();
+    Object.assign(zone.style, {
+      left:  (r.x * box.width)  + 'px', top:    (r.y * box.height) + 'px',
+      width: (r.w * box.width)  + 'px', height: (r.h * box.height) + 'px'});
+    zone.hidden = false;
+  } catch (e) { /* keep the last rectangle */ }
+}
+
+async function start() {
   try {
     v.srcObject = await navigator.mediaDevices.getUserMedia({
-      video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}}, audio: false});
-    sending = true;
+      video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}},
+      audio: false});
+    document.getElementById('tap').hidden = true;
     grabLoop();
   } catch (e) {
-    err.textContent = 'Camera blocked: ' + e.name + '. ' + e.message;
+    // Safari refuses an unprompted camera on some page loads; offer one tap.
+    errEl.textContent = e.name;
+    document.getElementById('tap').hidden = false;
   }
-};
+}
 
-// Works over plain http, so it is the fallback if https will not cooperate.
-document.getElementById('shot').onchange = async e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  await post(f);
-  status.textContent = 'photo sent';
-};
-
-// Keep the screen awake during a demo.
+document.getElementById('tap').onclick = start;
+start();                                   // no button: streaming starts itself
+setInterval(drawZone, 1500);
+window.addEventListener('resize', drawZone);
 if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
 </script>
 </body>

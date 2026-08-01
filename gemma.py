@@ -83,8 +83,14 @@ def _parse(text, fallback):
 
 
 def inventory(frame):
-    """Name every object on the tray. Returns a list of names."""
-    items = _parse(_ask(INVENTORY_PROMPT, frame), [])
+    """Name every object in the count zone. Returns a list of names.
+
+    Raises rather than returning [] on an unreadable reply: an empty list means
+    "the field is empty", and in the autonomous loop that silently flips every
+    instrument to retained at once."""
+    items = _parse(_ask(INVENTORY_PROMPT, frame), _UNREADABLE)
+    if not isinstance(items, list):
+        raise ValueError("expected a list of names from Gemma")
     return [str(i).strip().lower() for i in items if str(i).strip()]
 
 

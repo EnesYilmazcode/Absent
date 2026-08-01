@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import FastSAM
 
@@ -75,7 +75,27 @@ _phone_seen = 0.0      # when it arrived, so we can fall back if the phone drops
 
 CATALOG = Path("static/catalog")
 CATALOG.mkdir(parents=True, exist_ok=True)
-catalog = []           # [{name, file, at}], the running instrument roll
+catalog = []           # the manifest, one entry per instrument
+events = []            # what happened and when, newest first
+pending = Counter()    # names seen once, not yet trusted enough to catalogue
+
+# The scene must hold still this many samples (at 0.25s each) before Gemma is
+# asked anything, so a hand moving through the field never triggers a count.
+STABLE_SAMPLES = 12    # 0.1s apart, so the scene must hold for ~1.2s
+STABLE_MAJORITY = 9    # of those 12, not all 12: masks flicker
+WATCH_PERIOD = 1.5     # cooldown after a call returns
+HEARTBEAT = 12.0       # re-check even when the scene looks unchanged
+MANIFEST_CAP = 8       # hard stop against free-association on a dark crop
+
+# Gemma is told to skip these and names them anyway. The jacket standing in for
+# the body is the dangerous one: catalogue it and it "goes missing" the moment
+# the camera shifts, which is a phantom retained instrument on the projector.
+BLOCKLIST = {
+    "hand", "hands", "finger", "fingers", "arm", "person", "people", "face",
+    "jacket", "coat", "hoodie", "sweater", "shirt", "sleeve", "clothing",
+    "cloth", "fabric", "pocket", "table", "surface", "desk", "floor", "wall",
+    "background", "shadow", "light", "reflection", "line", "circle", "c",
+}
 
 
 def _palette(n):
@@ -92,11 +112,14 @@ def _roi(shape):
 
 
 def _in_roi(m, shape):
+    """Overlap, not centroid. An item being pushed into the jacket has its
+    centroid leave the rectangle well before the item is actually gone, and a
+    hand entering from below counts the moment the wrist crosses the line."""
     x1, y1, x2, y2 = _roi(shape)
-    ys, xs = np.nonzero(m)
-    if not len(ys):
+    area = int(m.sum())
+    if not area:
         return False
-    return x1 <= xs.mean() <= x2 and y1 <= ys.mean() <= y2
+    return int(m[y1:y2, x1:x2].sum()) / area >= 0.5
 
 
 def _clean(m):
@@ -263,6 +286,7 @@ def _snapshot(tag):
 def startup():
     threading.Thread(target=_capture_loop, daemon=True).start()
     threading.Thread(target=gemma.warm_up, daemon=True).start()
+    threading.Thread(target=_watch_loop, daemon=True).start()
 
 
 @app.get("/")
@@ -284,6 +308,22 @@ def feed():
             time.sleep(0.04)
 
     return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=f")
+
+
+@app.get("/frame.jpg")
+def frame_jpg():
+    """One frame, not a stream. An MJPEG <img> that drops dies permanently and
+    leaves a black screen with no way back; polling single frames always
+    recovers on the next request."""
+    with _lock:
+        frame = _annotated
+    if frame is None:
+        return Response(status_code=503)
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ok:
+        return Response(status_code=503)
+    return Response(buf.tobytes(), media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/state")
@@ -420,6 +460,138 @@ def catalog_add():
     return {"ok": True, "item": entry, "count": len(catalog)}
 
 
+def _watch_loop():
+    """Autonomous count. Nobody presses anything: the scene is watched, and
+    when it settles, Gemma is asked once what is there. Items that appear get
+    added to the manifest, items that stop being visible are inside the body,
+    items that come back out are accounted for again.
+
+    Gemma costs ~4s a call so it cannot run per frame. Mask count is the cheap
+    per-frame signal, and it only fires a call once that count has held still,
+    which also keeps a hand moving through the field from poisoning anything.
+    """
+    history, last_run, last_count = [], 0.0, None
+
+    while True:
+        time.sleep(0.1)
+        history.append(state["tracking"])
+        history = history[-STABLE_SAMPLES:]
+        if len(history) < STABLE_SAMPLES:
+            continue
+
+        # Not exact equality. Requiring 12 identical samples never fires while
+        # a hand is in shot; the most common value winning 9 of 12 rides out
+        # FastSAM dropping a mask for two or three frames.
+        common = max(set(history), key=history.count)
+        if history.count(common) < STABLE_MAJORITY or history[-1] != common:
+            continue
+        if state["busy"] or time.time() - last_run < WATCH_PERIOD:
+            continue
+        # Normally only re-ask when the number of things on screen changed, but
+        # swapping one item for another keeps the count identical, so re-check
+        # anyway on a slow heartbeat.
+        if common == last_count and time.time() - last_run < HEARTBEAT:
+            continue
+        if common == 0 and not catalog:
+            continue                       # empty scene, nothing to do
+
+        time.sleep(0.3)                    # let the hand finish withdrawing
+        last_run, dropped = time.time(), last_count is not None and common < last_count
+        last_count = common
+        try:
+            _reconcile(dropped)
+        except Exception as e:
+            state["error"] = f"watch: {type(e).__name__}"[:120]
+
+
+def _reconcile(dropped):
+    """One Gemma call, then fold what it saw into the manifest."""
+    with _lock:
+        frame = None if _raw is None else _raw.copy()
+        masks = list(_masks)
+    if frame is None:
+        return
+
+    x1, y1, x2, y2 = _roi(frame.shape)
+    state["busy"] = True
+    try:
+        seen = Counter(gemma.inventory(frame[y1:y2, x1:x2]))
+        state["error"] = ""
+    finally:
+        state["busy"] = False
+
+    for item in catalog:
+        # Match, not equality: Gemma answers "scissor" for "scissors", and a
+        # rename is both a phantom new item and a phantom retained one.
+        hit = gemma._match(item["name"], [n for n in seen if seen[n] > 0])
+        if hit:
+            seen[hit] -= 1
+            item["misses"] = 0
+            if item["status"] != "in view":
+                item["status"] = "in view"
+                _log(f"{item['name']} came back out")
+        else:
+            item["misses"] += 1
+            # Asymmetric on purpose. If the mask count also dropped, geometry
+            # corroborates the disappearance and it is called immediately.
+            # Otherwise Gemma just under-reported, so wait for a second miss.
+            if item["status"] != "inside" and (dropped or item["misses"] >= 2):
+                item["status"] = "inside"
+                _log(f"{item['name']} went inside")
+
+    for name in set(seen.elements()):
+        if len(catalog) >= MANIFEST_CAP or not _plausible(name):
+            continue
+        if gemma._match(name, [i["name"] for i in catalog]):
+            continue                       # a rename of something we already hold
+        _add_item(name, frame, masks)
+
+
+def _plausible(name):
+    """Keep the manifest to things that could actually be an instrument."""
+    return (name not in BLOCKLIST
+            and len(name.split()) <= 3
+            and "part of" not in name and "piece of" not in name
+            and not any(w in BLOCKLIST for w in name.split()))
+
+
+def _add_item(name, frame, masks):
+    """A name Gemma sees that the manifest does not have yet.
+
+    The picture is the mask nearest the middle of the zone, because that is
+    where a person deliberately holds the thing they want counted. Guessing
+    which mask is "new" from stored centroids reliably picked the odd sliver
+    at the edge of frame instead."""
+    x1, y1, x2, y2 = _roi(frame.shape)
+    zone = frame[y1:y2, x1:x2]
+    mask = _held_mask(masks, frame.shape)
+    try:
+        # A mask covering most of the zone is the jacket or a torso, not a tool.
+        if mask is not None and mask.sum() < 0.4 * max((y2 - y1) * (x2 - x1), 1):
+            thumb = _cutout(frame, mask)
+        else:
+            thumb = zone
+    except Exception:
+        thumb = zone
+
+    fname = f"{len(catalog):02d}_{re.sub(r'[^a-z0-9]+', '-', name).strip('-')}.jpg"
+    cv2.imwrite(str(CATALOG / fname), thumb)
+    catalog.append({"name": name, "file": f"/static/catalog/{fname}",
+                    "at": datetime.now().strftime("%H:%M:%S"), "status": "in view",
+                    "misses": 0})
+    _log(f"{name} counted in")
+
+
+def _log(message):
+    events.insert(0, {"at": datetime.now().strftime("%H:%M:%S"), "what": message})
+    del events[40:]
+
+
+@app.get("/events")
+def get_events():
+    return events
+
+
 @app.post("/verify")
 def verify():
     """Check the manifest against what the camera can see right now. Anything
@@ -451,6 +623,8 @@ def verify():
 @app.post("/catalog/clear")
 def catalog_clear():
     catalog.clear()
+    events.clear()
+    pending.clear()
     for f in CATALOG.glob("*.jpg"):
         f.unlink(missing_ok=True)
     reset()
