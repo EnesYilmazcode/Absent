@@ -48,6 +48,9 @@ def _ask(prompt, frame):
         "images": [_encode(frame)],
         "stream": False,
         "think": False,
+        # Ollama's default keep_alive is 5 minutes. Sit through six minutes of
+        # questions and the first count on stage costs 21s instead of 4s.
+        "keep_alive": -1,
         "options": {"temperature": 0, "seed": SEED},
     }
     r = requests.post(OLLAMA, json=body, timeout=TIMEOUT)

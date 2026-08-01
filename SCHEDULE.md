@@ -5,10 +5,25 @@ That is **202 minutes**, and about 45 of them are reserved for video.
 
 ## Read this first
 
-**Is a video required?** No. The rubric allows "live demo **or** video", and you are
-presenting live anyway. The video is insurance against the demo failing on stage, not a
-deliverable. It is still worth recording, because a frozen camera feed at 4:10 PM with no
-backup costs you the Functionality score outright.
+**CORRECTION, 12:50 PM. The recording is mandatory. Earlier in this file it was called
+insurance. That was wrong.**
+
+The Kaggle competition page states: *"A valid submission must contain the following:
+Kaggle Writeup, Attached Public Code Repository, Attached Live Demo (or Clonable
+Notebook)."* The demo is one of three required components, and it accepts *"a URL or
+files for your working demo (this can be a hosted web app, an interactive terminal
+recording, or a fully functional Kaggle Notebook)."*
+
+Absent is a local webcam plus a local Ollama server with wifi off. **You cannot satisfy
+any of those three forms live.** There is no hostable URL, and no Kaggle Notebook can
+reach your webcam. A screen recording, attached as a file or as an unlisted YouTube link,
+is the only path to a *valid* submission.
+
+**The 4:00 PM live presentation does not satisfy this.** It is a separate, parallel
+deliverable. You need both. Organizer email, 07-26: *"your final demo has to run live"*
+refers to the stage, not to Kaggle.
+
+Consequence: the video block is no longer cuttable. It moved earlier and it is protected.
 
 **The one thing that decides this project is still unmeasured.** Determinism and latency
 are measured. Naming accuracy on a real tray is not. Nothing else on this list matters
@@ -24,19 +39,23 @@ score. A perfect writeup submitted at 4:01 scores nothing.
 
 | Time | Who | What | Done when |
 |---|---|---|---|
-| 12:40–1:15 | both | **The tray test.** Phone camera overhead on a light surface, 6 to 8 visually distinct objects, no overlap. Count in. Hand the tray away, remove one object. Count out. | The UI names the removed object under "unaccounted for", once, on real objects |
-| **1:15** | Enes | **GO / NO-GO.** | See the fallback ladder below. Do not carry a broken pipeline past this point |
-| 1:15–1:30 | both | Fix only what the tray test broke. Screen-record the first working run **the moment it works** (`Win + Alt + R`, lands in `Videos\Captures`) | A raw recording of one successful count exists on disk |
-| 1:30–1:45 | Enes | **Insurance submission.** Kaggle writeup, placeholder text, repo link. **SAVE, then click SUBMIT.** They are two separate buttons | The competition page shows a submitted entry, confirmed by reload |
-| 1:45–2:05 | collaborator | README fixes: run command says port 8000 but the app serves **HTTPS on 8443**, the endpoint list is missing `/phone`, `/cameras`, `/camera/{index}`, `/source`, and there is no `LICENSE` file despite the AGPL-3.0 badge | `README.md` run command matches what actually starts the server |
-| 1:45–2:05 | Enes | Writeup body: problem, the zero-shot insight, measured numbers, safety, attribution | Writeup text is final except for the video link |
-| 2:05–2:25 | both | Harden the demo. Warm-up call before every run. Practice the restart drill. Confirm the phone fallback path works | You can recover from a frozen feed in under 20 seconds without thinking |
-| 2:25–2:40 | Enes | **Rehearsal 1, timed, out loud, standing.** Target 2:00 | You finished inside 2:00 with a stopwatch running |
-| 2:40–2:55 | both | Buffer. Fix what rehearsal 1 exposed. If nothing broke, rehearse again | Nothing outstanding, or rehearsal 2 done |
-| 2:55–3:40 | both | **Video block, 45 min.** Record the full demo. Re-record once if the first take is weak. Upload to YouTube **unlisted**. Test the link in an incognito window | A link a stranger can open plays the working demo |
-| 3:40–3:52 | Enes | Paste the video link and repo link into the writeup. **SAVE, then SUBMIT again** | Reload shows the submitted entry carrying both links |
-| 3:52–4:00 | both | Pre-stage checklist below | Every box ticked |
-| **4:00** | Enes | Present | |
+| 12:50–1:20 | both | **The tray test.** Phone camera overhead on a light surface, 6 to 8 visually distinct objects, no overlap. Count in. Hand the tray away, remove one object. Count out | The UI names the removed object under "unaccounted for", once, on real objects |
+| **1:20** | Enes | **GO / NO-GO.** | See the fallback ladder below. Do not carry a broken pipeline past this point |
+| 1:20–1:35 | collaborator | **The two fixes that break the demo climax.** `keep_alive: -1` in `gemma._ask` (2 min), and fuzzy name matching in `check_against` (10 min). Both are specified below | A count run 10 minutes after the last one still takes 4 s, not 21 s |
+| 1:20–1:35 | Enes | **Record the first working run the moment it works.** OBS Display Capture, not Game Bar | A raw recording of one successful count exists on disk |
+| 1:35–1:50 | Enes | **Insurance submission.** Kaggle writeup, placeholder text, repo link, track = On-Device Private Health. **SAVE, then click SUBMIT** | Reload of the competition page shows a submitted entry |
+| 1:50–2:10 | collaborator | `pip freeze > requirements.txt`, un-ignore `FastSAM-s.pt`, fix the README run command (says port 8000, app serves **HTTPS on 8443**) | A fresh clone runs with wifi off |
+| 1:50–2:15 | Enes | Writeup body, **max 1,500 words**. Architecture and how Gemma 4 is used | Writeup final except the demo attachment |
+| 2:15–2:35 | both | Harden. Restart drill. Warm call before every run. **Do not touch `/cameras`** | You recover from a frozen feed in under 20 seconds without thinking |
+| 2:35–2:50 | Enes | **Rehearsal 1, timed, out loud, standing.** Target 2:00 | You finished inside 2:00 with a stopwatch running |
+| **2:50–3:35** | both | **Video block, 45 min. PROTECTED, this is a required submission component.** Record the full demo. Upload YouTube **unlisted**, or attach the MP4 as a file. Test in an incognito window | A stranger with the link can watch the working demo |
+| 3:35–3:50 | Enes | Attach the demo to the writeup. **SAVE, then SUBMIT again** | Reload shows a submitted entry carrying writeup, repo, and demo |
+| 3:50–4:00 | both | Pre-stage checklist below | Every box ticked |
+| **4:00** | Enes | Present live | |
+
+**One writeup per team.** You merged with Hong Cheng Wang at 11:14 AM. Agree in the next
+five minutes who owns it. Two writeups from one team is not something you want to
+untangle at 3:40.
 
 ---
 
@@ -63,14 +82,54 @@ Do not spend a minute of build day trying to switch models.
 
 ---
 
+## Verified demo killers, with the patches
+
+Every one of these was reproduced on this machine, not guessed.
+
+**1. Ollama evicts the model after 5 minutes idle. Cost: 2 minutes.**
+`GET /api/ps` shows `expires_at` five minutes out. Sit through questions for six minutes
+and the first count on stage takes **21 seconds**, not 4. In `gemma._ask`, next to
+`"stream": False`:
+
+```python
+"keep_alive": -1,
+```
+
+**2. Name drift invents phantom missing instruments, at the exact climax. Cost: 10 min.**
+Reproduced: count-in `['scissors','clamp']`, Gemma's count-out reply
+`{"present": ["scissor","clamps"], "missing": []}`. Because `check_against` compares with
+exact string equality, it returns **both** `present=['scissor','clamps']` and
+`missing=['scissors','clamp']`. The screen shows two items unaccounted for when nothing
+was removed. This fires precisely when the judge is watching. In `gemma.check_against`,
+normalize before the set difference:
+
+```python
+n = lambda s: s.strip().lower().rstrip("s")
+seen = {n(x) for x in present} | {n(x) for x in missing}
+missing += [i for i in items if n(i) not in seen]
+```
+
+**3. `/cameras` permanently kills the live feed.** Confirmed: the probe loop opens index 0
+while the capture thread already holds it, DirectShow hands the device over, and the
+original holder never recovers. **Do not open that endpoint during the demo.** If you need
+it, hardcode the index with `ABSENT_CAMERA` instead.
+
+**4. The capture thread has no `try`/`except`.** One exception from `model.predict` and
+the daemon thread dies silently. The feed freezes on the last good frame and counts keep
+running against a stale image, with no error anywhere on screen. Wrap the loop body if
+there is time. If not, know the symptom: **a frozen feed means restart the server.**
+
+---
+
 ## If you are behind at 2:30, cut in this order
 
 1. Rehearsal 2. Keep rehearsal 1.
-2. The re-record. Ship the first video take even if it is rough.
-3. README polish. The writeup matters more, judges read Kaggle first.
-4. The video block entirely, down to a single unedited take of one successful count.
+2. The capture-thread `try`/`except`. Restart instead.
+3. README polish. Judges read the Kaggle writeup first.
+4. The video **re-record**. Ship the first take even if it is rough.
 
-Never cut: the insurance submission, the pre-stage warm-up, and the final SUBMIT click.
+**Never cut:** the insurance submission, the video itself (it is a required submission
+component), the `keep_alive` fix, the pre-stage warm-up, and the final SUBMIT click.
 
 ---
 
@@ -86,10 +145,30 @@ Never cut: the insurance submission, the pre-stage warm-up, and the final SUBMIT
   hackathon because Save is not Submit.
 - **Do not test with the built-in webcam pointed at your face.** That is what the 12:26
   capture was, and it measures nothing.
+- **Do not open `/cameras` after the demo starts.** It steals the camera from the capture
+  thread and the feed never comes back.
+- **Do not record with Xbox Game Bar.** It captures only the focused window, stops on
+  alt-tab, and will not record File Explorer or the desktop. Your demo is a browser window
+  plus a physical tray. Use **OBS Display Capture**.
+- **Do not upload the video as YouTube "private".** Judges get an access-denied page. It
+  must be **unlisted**, and everything must open with no login and no paywall. Test it in
+  an incognito window before you paste the link.
 
 ---
 
-## Pre-stage checklist, 3:52
+## Before you record, at 2:50
+
+OBS on this machine was found misconfigured during the earlier session. Fix it before the
+video block starts, not during it.
+
+- Settings > Audio > **Desktop Audio = Default**, otherwise the recording is silent
+- Settings > Video > both Base and Output resolution **1920x1080**
+- Settings > Output > **Hybrid MP4**, which survives a crash mid-recording
+- Use **Display Capture**, so the physical tray and the browser are both in frame
+
+---
+
+## Pre-stage checklist, 3:50
 
 - [ ] **Warm the model.** One throwaway call so a cold-start crash cannot happen on
       stage. `llama-server` has died once already on a first cold call.
