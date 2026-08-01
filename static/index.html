@@ -19,8 +19,10 @@
   /* A phone held upright sends a tall frame; cap it so the page never
      turns into a ribbon you have to scroll. */
   .stage { display:flex; align-items:flex-start; justify-content:center; }
-  #feed { max-width:100%; max-height:calc(100dvh - 140px); width:auto;
-          border-radius:10px; border:1px solid var(--line); display:block; }
+  #feed { max-width:100%; max-height:calc(100dvh - 170px); width:auto;
+          border-radius:10px; border:1px solid var(--line); display:block;
+          cursor:crosshair; user-select:none; -webkit-user-drag:none; }
+  .draghint { color:var(--dim); font-size:13px; text-align:center; margin:10px 0 0; }
   .panel { background:var(--panel); border:1px solid var(--line);
            border-radius:10px; padding:18px; margin-bottom:16px; }
   .panel h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase;
@@ -49,7 +51,10 @@
 </header>
 
 <main>
-  <div class="stage"><img id="feed" src="/feed" alt="instrument field"></div>
+  <div>
+    <div class="stage"><img id="feed" src="/feed" alt="instrument field"></div>
+    <p class="draghint">Drag on the video to set the count zone.</p>
+  </div>
   <div>
     <div class="panel">
       <h2>Count</h2>
@@ -102,6 +107,33 @@ async function post(path) {
   $('in').textContent = 'Counting…';
   render(await (await fetch(path, {method:'POST'})).json());
 }
+
+// Drag anywhere on the video to redraw the count zone. Fractions, so it stays
+// correct whatever resolution the phone or webcam happens to be sending.
+const feed = $('feed');
+let anchor = null;
+
+const at = e => {
+  const r = feed.getBoundingClientRect();
+  return {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height};
+};
+
+feed.addEventListener('pointerdown', e => {
+  anchor = at(e);
+  feed.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+feed.addEventListener('pointerup', async e => {
+  if (!anchor) return;
+  const b = at(e), a = anchor;
+  anchor = null;
+  const zone = {x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+                w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y)};
+  if (zone.w < 0.04 || zone.h < 0.04) return;   // a click, not a drag
+  await fetch('/zone', {method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify(zone)});
+});
 
 $('in').onclick    = () => post('/count/in');
 $('out').onclick   = () => post('/count/out');

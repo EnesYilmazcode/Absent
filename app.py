@@ -49,8 +49,8 @@ MAX_BORDER = 0.30
 
 # The count zone. Only what is inside this rectangle is tracked or counted, so
 # the jacket standing in for the body defines the field and the rest of the room
-# cannot wander into the count. Fractions of the frame: width, height.
-ROI_W, ROI_H = 0.62, 0.74
+# cannot wander into the count. Fractions of the frame, drag on the feed to move.
+ROI = {"x": 0.34, "y": 0.30, "w": 0.32, "h": 0.40}
 
 CAPTURES = Path("captures")
 CAPTURES.mkdir(exist_ok=True)
@@ -63,7 +63,7 @@ model = FastSAM("FastSAM-s.pt")
 
 state = {"stage": "idle", "count_in": [], "present": [], "missing": [],
          "busy": False, "camera": CAMERA_INDEX, "tracking": 0, "source": "webcam",
-         "roi_w": ROI_W, "roi_h": ROI_H}
+         "roi": dict(ROI), "error": ""}
 _lock = threading.Lock()
 _raw = None
 _annotated = None
@@ -84,14 +84,16 @@ def _palette(n):
 
 def _roi(shape):
     h, w = shape[:2]
-    rw, rh = int(w * state["roi_w"]), int(h * state["roi_h"])
-    x1, y1 = (w - rw) // 2, (h - rh) // 2
-    return x1, y1, x1 + rw, y1 + rh
+    r = state["roi"]
+    x1, y1 = int(w * r["x"]), int(h * r["y"])
+    return x1, y1, min(w, x1 + int(w * r["w"])), min(h, y1 + int(h * r["h"]))
 
 
 def _in_roi(m, shape):
     x1, y1, x2, y2 = _roi(shape)
     ys, xs = np.nonzero(m)
+    if not len(ys):
+        return False
     return x1 <= xs.mean() <= x2 and y1 <= ys.mean() <= y2
 
 
@@ -177,10 +179,6 @@ def _overlay(frame, masks):
 
     x1, y1, x2, y2 = _roi(frame.shape)
     cv2.rectangle(out, (x1, y1), (x2, y2), (255, 255, 255), 2)
-    cv2.putText(out, "count zone", (x1 + 10, y1 + 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(out, f"tracking {len(masks)}", (16, 42),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
     return out
 
 
@@ -282,7 +280,10 @@ def count_in():
     state["busy"] = True
     try:
         items = gemma.inventory(_snapshot("count_in"))
-        state.update(stage="counted_in", count_in=items, present=[], missing=[])
+        state.update(stage="counted_in", count_in=items, present=[], missing=[],
+                     error="")
+    except Exception as e:                      # never 500 mid-demo
+        state["error"] = f"{type(e).__name__}: {e}"[:120]
     finally:
         state["busy"] = False
     return state
@@ -295,7 +296,9 @@ def count_out():
     state["busy"] = True
     try:
         present, missing = gemma.check_against(_snapshot("count_out"), state["count_in"])
-        state.update(stage="counted_out", present=present, missing=missing)
+        state.update(stage="counted_out", present=present, missing=missing, error="")
+    except Exception as e:
+        state["error"] = f"{type(e).__name__}: {e}"[:120]
     finally:
         state["busy"] = False
     return state
@@ -320,13 +323,14 @@ def identify():
 
 
 def _held_mask(masks, shape):
-    """The object being held up is the one nearest the middle of the frame."""
-    if not masks:
-        return None
-    cy, cx = shape[0] / 2, shape[1] / 2
+    """The object being held up is the one nearest the middle of the count zone."""
+    x1, y1, x2, y2 = _roi(shape)
+    cy, cx = (y1 + y2) / 2, (x1 + x2) / 2
     best, best_d = None, None
     for m in masks:
         ys, xs = np.nonzero(m)
+        if not len(ys):
+            continue
         d = (ys.mean() - cy) ** 2 + (xs.mean() - cx) ** 2
         if best_d is None or d < best_d:
             best, best_d = m, d
@@ -337,7 +341,9 @@ def _cutout(frame, mask):
     """Crop to the mask and fade everything around it, so a catalog card shows
     the instrument rather than whatever was behind it."""
     ys, xs = np.nonzero(mask)
-    pad = int(0.08 * max(ys.ptp(), xs.ptp()) + 8)
+    # np.ptp(arr), not arr.ptp(): numpy 2.0 removed the method and this ran on
+    # every catalog add, so holding an item up and pressing add always 500'd.
+    pad = int(0.08 * max(np.ptp(ys), np.ptp(xs)) + 8)
     y1, y2 = max(0, ys.min() - pad), min(frame.shape[0], ys.max() + pad)
     x1, x2 = max(0, xs.min() - pad), min(frame.shape[1], xs.max() + pad)
 
@@ -365,12 +371,19 @@ def catalog_add():
     if frame is None:
         return {"ok": False, "error": "no camera frame yet"}
 
-    name = gemma.identify_held(frame)
+    x1, y1, x2, y2 = _roi(frame.shape)
+    try:
+        name = gemma.identify_held(frame[y1:y2, x1:x2])
+    except Exception as e:                      # never 500 mid-demo
+        return {"ok": False, "error": f"gemma: {type(e).__name__}"}
     if name in ("none", ""):
-        return {"ok": False, "error": "hold the item up to the camera"}
+        return {"ok": False, "error": "hold the item up inside the count zone"}
 
     mask = _held_mask(masks, frame.shape)
-    thumb = _cutout(frame, mask) if mask is not None else frame
+    try:
+        thumb = _cutout(frame, mask) if mask is not None else frame[y1:y2, x1:x2]
+    except Exception:
+        thumb = frame[y1:y2, x1:x2]             # a card without a cutout beats none
     fname = f"{len(catalog):02d}_{re.sub(r'[^a-z0-9]+', '-', name).strip('-')}.jpg"
     cv2.imwrite(str(CATALOG / fname), thumb)
 
@@ -441,9 +454,13 @@ def reset():
     return state
 
 
-@app.post("/zone/{width}/{height}")
-def set_zone(width: float, height: float):
-    """Resize the count zone to fit the jacket, as fractions of the frame."""
-    state["roi_w"] = min(max(width, 0.15), 1.0)
-    state["roi_h"] = min(max(height, 0.15), 1.0)
+@app.post("/zone")
+async def set_zone(request: Request):
+    """Drag a rectangle on the feed to say where the count happens."""
+    r = await request.json()
+    x = min(max(float(r["x"]), 0.0), 0.95)
+    y = min(max(float(r["y"]), 0.0), 0.95)
+    state["roi"] = {"x": x, "y": y,
+                    "w": min(max(float(r["w"]), 0.05), 1.0 - x),
+                    "h": min(max(float(r["h"]), 0.05), 1.0 - y)}
     return state
