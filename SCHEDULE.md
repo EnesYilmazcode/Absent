@@ -37,20 +37,26 @@ score. A perfect writeup submitted at 4:01 scores nothing.
 
 ## The schedule
 
+**LOCK IS 3:45, NOT 4:00.** The posted event schedule says 3:45. `CONTEXT.md` recorded a
+move to 4:00, but the board is the board. Assume 3:45 and lose nothing if it is wrong.
+There is also a **3:00 mentor check-in** that will interrupt you. Plan for it.
+
 | Time | Who | What | Done when |
 |---|---|---|---|
-| 12:50–1:20 | both | **The tray test.** Phone camera overhead on a light surface, 6 to 8 visually distinct objects, no overlap. Count in. Hand the tray away, remove one object. Count out | The UI names the removed object under "unaccounted for", once, on real objects |
-| **1:20** | Enes | **GO / NO-GO.** | See the fallback ladder below. Do not carry a broken pipeline past this point |
-| 1:20–1:35 | collaborator | **The two fixes that break the demo climax.** `keep_alive: -1` in `gemma._ask` (2 min), and fuzzy name matching in `check_against` (10 min). Both are specified below | A count run 10 minutes after the last one still takes 4 s, not 21 s |
-| 1:20–1:35 | Enes | **Record the first working run the moment it works.** OBS Display Capture, not Game Bar | A raw recording of one successful count exists on disk |
-| 1:35–1:50 | Enes | **Insurance submission.** Kaggle writeup, placeholder text, repo link, track = On-Device Private Health. **SAVE, then click SUBMIT** | Reload of the competition page shows a submitted entry |
-| 1:50–2:10 | collaborator | `pip freeze > requirements.txt`, un-ignore `FastSAM-s.pt`, fix the README run command (says port 8000, app serves **HTTPS on 8443**) | A fresh clone runs with wifi off |
-| 1:50–2:15 | Enes | Writeup body, **max 1,500 words**. Architecture and how Gemma 4 is used | Writeup final except the demo attachment |
-| 2:15–2:35 | both | Harden. Restart drill. Warm call before every run. **Do not touch `/cameras`** | You recover from a frozen feed in under 20 seconds without thinking |
-| 2:35–2:50 | Enes | **Rehearsal 1, timed, out loud, standing.** Target 2:00 | You finished inside 2:00 with a stopwatch running |
-| **2:50–3:35** | both | **Video block, 45 min. PROTECTED, this is a required submission component.** Record the full demo. Upload YouTube **unlisted**, or attach the MP4 as a file. Test in an incognito window | A stranger with the link can watch the working demo |
-| 3:35–3:50 | Enes | Attach the demo to the writeup. **SAVE, then SUBMIT again** | Reload shows a submitted entry carrying writeup, repo, and demo |
-| 3:50–4:00 | both | Pre-stage checklist below | Every box ticked |
+| 1:20–1:45 | Enes | **The staged tray test.** Plain light surface, 6 to 8 clearly different objects, well separated, phone overhead, no shadow across the field. Count in, remove one, count out | The UI names the removed object under "unaccounted for" |
+| **1:45** | Enes | **GO / NO-GO.** | See the fallback ladder below. Do not carry a broken pipeline past this point |
+| 1:20–1:45 | collaborator | Name-drift fix in `check_against` (patch below). Then `pip freeze > requirements.txt` | A count-out that returns "scissor" for "scissors" does not report a phantom missing item |
+| 1:45–2:00 | Enes | **Insurance submission.** Kaggle writeup, placeholder text, repo link, track = On-Device Private Health. **SAVE, then click SUBMIT** | Reload of the competition page shows a submitted entry |
+| 1:45–2:00 | Enes | **Record the first working run the moment it works.** OBS Display Capture, not Game Bar | A raw recording of one successful count exists on disk |
+| 2:00–2:20 | collaborator | Un-ignore `FastSAM-s.pt`, fix the README run command (says port 8000, app serves **HTTPS on 8443**), settle the missing `LICENSE` | A fresh clone runs with wifi off |
+| 2:00–2:20 | Enes | Writeup body, **max 1,500 words**. Architecture and how Gemma 4 is used | Writeup final except the demo attachment |
+| 2:20–2:35 | Enes | **Rehearsal 1, timed, out loud, standing.** `PITCH.md`, target 2:00 | You finished inside 2:00 with a stopwatch running |
+| **2:35–3:20** | both | **Video block, 45 min. PROTECTED, this is a required submission component.** Record the full demo. Upload YouTube **unlisted**, or attach the MP4 as a file. Test in an incognito window | A stranger with the link can watch the working demo |
+| 3:00 | Enes | Mentor check-in, if they come to you. Treat it as a free rehearsal | You said the pitch to a stranger once |
+| 3:20–3:35 | Enes | Attach the demo to the writeup. **SAVE, then SUBMIT again** | Reload shows a submitted entry carrying writeup, repo, and demo |
+| 3:35–3:45 | both | Buffer. Rehearsal 2 if nothing is broken | |
+| **3:45** | | **SUBMISSIONS LOCK** | |
+| 3:45–4:00 | both | Pre-stage checklist below | Every box ticked |
 | **4:00** | Enes | Present live | |
 
 **One writeup per team.** You merged with Hong Cheng Wang at 11:14 AM. Agree in the next
