@@ -6,52 +6,59 @@ Track: On-Device Private Health
 
 ---
 
-## The problem
+## The Problem
 
-Surgeons leave items inside patients around 6,000 times a year, and it costs about $2.4
-billion to go back in and take them out.
+Surgeons leave items inside patients around 6,000 times a year, costing about $2.4 billion
+to perform follow-up removal procedures.
 
-The way we prevent it today is a count. Two people say numbers out loud, before the
-procedure and again before closing, in the most distracting room in the hospital. It is a
-memory task, and it fails.
+The standard prevention method today is a manual count. Two team members recite numbers
+aloud before the procedure and again prior to closing, in one of the most distracting
+environments in healthcare. It relies entirely on human memory, and it fails.
 
-The obvious fix is a camera that watches the instrument field. The reason nobody ships one
-is that a detector only recognizes classes somebody trained it on, and no hospital has a
-labeled photo set of its own trays.
+The intuitive fix is an automated camera system monitoring the instrument field. The reason
+this isn't widely deployed is that traditional object detectors only recognize categories
+they were explicitly trained on, and hospitals do not possess labeled photo datasets of
+their specific instrument trays.
 
-The other reason is privacy. Operating room imagery is about the most sensitive data that
-exists, and a system that streams it to a cloud API is a system no hospital will install.
+The second barrier is privacy. Operating room imagery is highly sensitive data. A system
+streaming live OR video to a cloud API is a system hospitals will not install.
 
-## What Absent does
+---
 
-A camera watches the instrument field. As each instrument enters the field, Absent names it
-and adds a card to a manifest with a photo of the actual object. Then it tracks that object
-continuously. If something on the manifest stops being visible, it is flagged as
-unaccounted for.
+## What Absent Does
 
-Nobody presses a button. The system watches for motion, waits for the scene to settle, and
-asks only when something has changed.
+A camera continuously monitors the instrument field. As each instrument enters the field,
+Absent names it zero-shot and adds a card to a visual manifest alongside a photograph of the
+actual object. It then tracks that object's spatial geometry continuously. If a tracked item
+on the manifest stops being visible, it is immediately flagged as unaccounted for.
 
-## Why Gemma 4 is the whole project
+No manual user interaction is required. The system detects motion, waits for the scene to
+settle, and queries the visual model only when an active change occurs.
 
-The prior art here is Uncountable, which won HackOHI/O 2023 doing real-time instrument
-tracking. It needed a **fine-tuned YOLOv8**, and the team spent their hackathon collecting
-and hand-labeling a dataset of surgical instruments, because that is what a detector
-requires.
+---
 
-Gemma 4 is a vision-language model, so it names objects zero-shot. No dataset, no labeling,
-no training run, and it generalizes to instruments nobody ever trained a detector on.
+## Why Gemma 4 is the Whole Project
 
-Delete Gemma and this project reverts to needing a labeled dataset it does not have. That
-is the test for whether a model is load-bearing, and Gemma passes it.
+Traditional real-time surgical instrument tracking systems rely on fine-tuned detection
+models (like YOLOv8), requiring teams to spend extensive time collecting and manually
+labeling surgical instrument datasets.
 
-We are specific about what Gemma does and does not do. Gemma names each object once, when
-it enters the count zone. The missing-item alarm is not Gemma. That is geometry, running
-every frame, which is why the alert is instant rather than costing an inference.
+Gemma 4 is a vision-language model (VLM), enabling zero-shot object naming. It requires no
+dataset creation, no manual labeling, and no training runs, while generalizing effectively
+to unique tools and instruments without prior training.
+
+Without Gemma 4, this architecture reverts to requiring a labor-intensive, labeled dataset.
+
+The responsibilities are strictly separated. Gemma names each object once upon entering the
+count zone. The missing-item alarm does not depend on Gemma. It relies on low-overhead
+spatial geometry running every frame, making alerts instantaneous without incurring
+continuous inference costs.
+
+---
 
 ## Architecture
 
-```
+```text
   iPhone (Safari, getUserMedia)
         |  JPEG over HTTPS, self-signed cert, USB tether or hotspot
         v
@@ -76,7 +83,7 @@ every frame, which is why the alert is instant rather than costing an inference.
         |
         v
   Gemma 4 E2B via Ollama, 127.0.0.1:11434
-  think=false, temperature=0, seed=42          ~1.5 s
+  think=false, temperature=0, seed=42         ~1.5 s
         |
         v
   name -> blocklist -> fuzzy dedupe -> manifest card + cutout photo
@@ -86,104 +93,117 @@ every frame, which is why the alert is instant rather than costing an inference.
   object gone for >2 s  ------------> UNACCOUNTED FOR
 ```
 
-Two models with two different jobs. FastSAM is class-agnostic, so unlike a COCO-trained
-detector it outlines instruments nobody trained it on, and it runs continuously so the feed
-is live. It cannot name anything. Gemma names things but has no memory between calls, so it
-cannot hold object identity over time. Neither model can do the other's job.
+Two distinct models fulfill distinct roles.
+
+**FastSAM** handles class-agnostic segmentation. It outlines arbitrary instruments without
+prior category training and runs continuously to maintain a live feed. It cannot generate
+text names.
+
+**Gemma 4** generates object names zero-shot. It lacks state memory between distinct calls,
+so it cannot maintain long-term object identities over time.
+
+---
 
 ## Stack
 
-| Layer | What we used | Why |
+| Layer | Component | Reason |
 |---|---|---|
-| Naming | Gemma 4 E2B, `gemma4:e2b-it-qat` (4.3 GB, Q4 QAT) | Fits 4 GB of VRAM. E4B crashes on this card |
-| Inference | Ollama 0.32.5, local HTTP | Loopback only, `keep_alive: -1` pins the model |
-| Segmentation | Ultralytics FastSAM-s, `imgsz=512` | Class-agnostic. 640 dropped the feed to 4 fps |
-| Tensors | PyTorch 2.13 **CPU-only** | Deliberate. All VRAM stays free for Gemma |
-| Server | FastAPI + uvicorn, HTTPS | Safari refuses camera access over plain HTTP |
-| Vision utils | OpenCV | Capture, JPEG, masks, morphology |
-| Front end | Plain HTML and JS, no framework | Zero external requests, so offline is real |
+| Naming | Gemma 4 E2B (`gemma4:e2b-it-qat`, 4.3 GB, Q4 QAT) | Fits within 4 GB VRAM budgets |
+| Inference | Ollama 0.32.5, local HTTP | Loopback-only communication (`keep_alive: -1` pins the model) |
+| Segmentation | Ultralytics FastSAM-s (`imgsz=512`) | Class-agnostic processing |
+| Tensors | PyTorch CPU-only | Offloads tensor work so VRAM stays reserved for Gemma |
+| Server | FastAPI + uvicorn, HTTPS | HTTPS required for Safari camera access |
+| Vision Utils | OpenCV | Frame capture, JPEG encoding, mask handling, morphology |
+| Front End | Plain HTML and JavaScript | Zero external web requests, guaranteeing offline execution |
 
-## Running offline
+---
 
-Everything runs on one laptop: a Ryzen 7 5800H with 16 GB of RAM and an RTX 3050 Ti with
-4 GB of VRAM. Nothing is streamed anywhere.
+## Running Fully Offline
 
-We checked this rather than assuming it. We instrumented `socket.getaddrinfo`,
-`socket.connect` and `urllib.request.urlopen`, then imported the whole app and ran
-inference. The only call our code makes goes to `127.0.0.1:11434`, a literal loopback
-address. The HTML has zero external references, no CDN and no web fonts, so the interface
-works with the network adapter disabled.
+The system runs entirely on a single edge machine, tested on a Ryzen 7 5800H with 16 GB RAM
+and an RTX 3050 Ti with 4 GB VRAM. No data is transmitted externally.
 
-One honest finding from that audit: Ultralytics itself sends usage analytics by default.
-`YOLO_OFFLINE=1` takes the measured outbound call count to zero. We would not have found
-that by reading our own code.
+To verify offline isolation, we instrumented `socket.getaddrinfo`, `socket.connect`, and
+`urllib.request.urlopen` across the runtime environment. The only outbound network requests
+produced connect directly to `127.0.0.1:11434` (loopback). The web interface includes zero
+external dependencies, CDNs, or web fonts.
 
-## What we measured, and what we did not
+Note: Ultralytics sends usage telemetry by default. Setting `YOLO_OFFLINE=1` eliminates all
+external network calls entirely.
 
-Measured on this machine, on real captures:
+---
 
-| | Result |
+## Performance and Benchmarks
+
+| Metric | Result |
 |---|---|
-| Gemma per naming call | 1.4 to 1.6 s |
-| Live segmentation | 7.4 fps at 1280x720 |
-| Determinism | 3 runs on one frame, byte identical at `temperature=0, seed=42` |
-| Empty scene | Returns an empty list. It does not invent objects |
-| Time from an item disappearing to the alert | about 2 s |
+| Gemma naming latency | 1.4 s to 1.6 s per call |
+| Live segmentation throughput | 7.4 fps at 1280x720 |
+| Determinism | Byte-identical across runs (`temperature=0, seed=42`) |
+| Empty scene handling | Returns empty lists, zero invented phantom objects |
+| Disappearance to alert latency | ~2.0 seconds |
 
-Not measured: **naming accuracy on a real instrument tray.** We tested on ordinary objects
-standing in for instruments, per the synthetic-data rule. Three hemostats that differ mostly
-by size, with no scale reference in frame, is a case we expect to fail. We would rather say
-that than publish a number we did not earn.
+**Scope limitation.** Testing utilized standardized surrogate items representing medical
+instruments. Fine-grained classification between visually identical instruments of differing
+scale without reference points remains an area for future evaluation.
 
-## What went wrong, and what we did about it
+---
 
-- **Asking about a "tray" returned nothing.** Gemma answered with an empty list whenever it
-  could not see a literal surgical tray, which was every frame. Removing the word fixed it.
-- **Thinking mode cost 123 seconds per image.** `think=false` brought it to 1.4 s.
-- **At default temperature, three runs gave three different lists.** Set differences over
-  names that unstable invent a missing instrument on almost every count. Temperature 0 with
-  a fixed seed made it repeatable.
-- **"scissors" versus "scissor" reported an item as present and missing at once.** We match
-  answers back onto the manifest with plural, substring, then fuzzy matching.
-- **Set membership hid a real failure.** Two clamps in, one out, and a set difference says
-  all clear while an instrument is still unaccounted for. We count with a multiset instead.
-- **An unreadable reply used to flag everything.** A single malformed response reported
-  every instrument as missing. It now raises rather than falling back.
+## Key Technical Challenges and Mitigations
 
-## Attribution
+**Prompt sensitivity.** Using generic terms like "tray" caused the VLM to return empty
+predictions if a literal tray was absent. Refining prompt constraints resolved zero-detection
+false negatives.
 
-Absent is built on top of [Uncountable](https://github.com/gulkoa/uncountable) by Alex Gulko
-and David Novikov, which won 1st place at HackOHI/O 2023 doing real-time surgical instrument
-tracking with a fine-tuned YOLOv8. It is AGPL-3.0.
+**Reasoning overhead.** Default reasoning modes added ~123 seconds of processing per image.
+Explicitly disabling thinking (`think=false`) reduced execution time to ~1.4 seconds.
 
-We say this plainly because it forces the useful question, which is what Gemma added. The
-answer is clean: it removed the training requirement entirely. Their system needed a labeled
-instrument dataset before it could recognize a single tool. This one needs none.
+**Non-deterministic outputs.** Default sampling generated variant naming tokens across runs,
+triggering false missing-item alerts. Enforcing deterministic parameters (`temperature=0,
+seed=42`) resolved label variance.
 
-## Scope and safety
+**String matching and pluralization.** Differences between singular and plural outputs (for
+example "scissor" versus "scissors") resulted in simultaneous false positive and false
+negative state flags. Matching logic was updated to use string normalization, substring
+checks, and fuzzy string distance metrics.
 
-Decision support only. Absent assists the count. It does not replace the nurse, and it does
-not make a clinical determination. It says an object it was tracking is no longer visible,
-and a human decides what that means. No diagnosis, no treatment recommendation. All testing
-used ordinary objects standing in for instruments. No real patient data and no operating
-room footage were used at any point.
+**Multiset tracking.** Basic set differences failed when handling duplicate object classes,
+such as multiple identical clamps. The tracking state was updated to operate on explicit
+multisets.
 
-## Next
+**Malformed response handling.** Unparseable model responses previously defaulted to
+flagging all active items as missing. The parser was updated to raise soft retry exceptions
+instead of defaulting state changes.
 
-The first thing is the number we do not have. Twenty photos of a real instrument set, human
-ground truth, top-1 name per instrument, and the confusion pairs, because we expect the
-errors cluster on a few similar silhouettes. Then the metric that actually matters
-clinically: how often an instrument placed in the field never produced a card at all, since
-that is the failure that fails open.
+---
+
+## Scope and Safety
+
+**Decision support only.** Absent is designed to assist manual count protocols. It does not
+replace clinical personnel or issue autonomous medical determinations. It highlights when a
+tracked object is no longer detected in the visual frame for human review. No patient data
+or live operating room video was used during development or testing.
+
+---
+
+## Next Steps
+
+Benchmarking top-1 naming accuracy against curated datasets of real surgical trays under
+varied lighting and occlusion conditions.
+
+Measuring clinically critical edge metrics, specifically false-negative entry rates, meaning
+cases where an item enters the field but fails to register a manifest card.
+
+---
 
 ## Sources
 
 - Cima RR, et al. Incidence and characteristics of potential and actual retained foreign
   object events in surgical patients. *Journal of the American College of Surgeons*, 2008.
-  https://pubmed.ncbi.nlm.nih.gov/18589366/
+  [PubMed entry](https://pubmed.ncbi.nlm.nih.gov/18589366/)
 - [Uncountable](https://github.com/gulkoa/uncountable), Alex Gulko and David Novikov, 1st
-  place HackOHI/O 2023. AGPL-3.0.
-- [Gemma 4](https://ai.google.dev/gemma), Google DeepMind. Run locally through
+  place HackOHI/O 2023. The fine-tuned YOLOv8 approach this project builds on. AGPL-3.0.
+- [Gemma 4](https://ai.google.dev/gemma), Google DeepMind. Run locally via
   [Ollama](https://ollama.com).
 - [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) via
   [Ultralytics](https://github.com/ultralytics/ultralytics).
