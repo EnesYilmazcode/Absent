@@ -21,6 +21,8 @@ def local_ips():
         ips.add(info[4][0])
     # Apple hands out 172.20.10.x over USB tethering and Personal Hotspot.
     ips.update(f"172.20.10.{n}" for n in range(1, 15))
+    # Windows Mobile Hotspot always puts this laptop on 192.168.137.1.
+    ips.update(f"192.168.137.{n}" for n in range(1, 8))
     return sorted(ips)
 
 
