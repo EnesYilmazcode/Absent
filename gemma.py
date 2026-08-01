@@ -44,6 +44,15 @@ CHECK_PROMPT = (
 
 
 def _encode(frame):
+    # Upscale small crops. Measured on this box: a 1280px image and a 256px one
+    # both take ~3.7s, so resolution is free, and at 384px E2B answered "wooden
+    # box, long wooden stick" for a scene it named correctly at full size. The
+    # count zone is a small crop, so it was being starved of pixels.
+    big = max(frame.shape[:2])
+    if big < 768:
+        s = 768 / big
+        frame = cv2.resize(frame, (int(frame.shape[1] * s), int(frame.shape[0] * s)),
+                           interpolation=cv2.INTER_CUBIC)
     ok, buf = cv2.imencode(".jpg", frame)
     if not ok:
         raise RuntimeError("could not encode frame")

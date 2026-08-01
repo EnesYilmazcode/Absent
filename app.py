@@ -81,9 +81,11 @@ pending = Counter()    # names seen once, not yet trusted enough to catalogue
 
 # The scene must hold still this many samples (at 0.25s each) before Gemma is
 # asked anything, so a hand moving through the field never triggers a count.
-STABLE_SAMPLES = 12    # 0.1s apart, so the scene must hold for ~1.2s
-STABLE_MAJORITY = 9    # of those 12, not all 12: masks flicker
-WATCH_PERIOD = 1.5     # cooldown after a call returns
+# Gemma is a fixed ~3.7s no matter what we send it, so every millisecond of
+# perceived latency has to come out of the settle time instead.
+STABLE_SAMPLES = 8     # 0.1s apart, so the scene must hold for ~0.8s
+STABLE_MAJORITY = 6    # of those 8, not all 8: masks flicker
+WATCH_PERIOD = 0.4     # cooldown after a call returns
 HEARTBEAT = 12.0       # re-check even when the scene looks unchanged
 MANIFEST_CAP = 8       # hard stop against free-association on a dark crop
 
@@ -95,6 +97,8 @@ BLOCKLIST = {
     "jacket", "coat", "hoodie", "sweater", "shirt", "sleeve", "clothing",
     "cloth", "fabric", "pocket", "table", "surface", "desk", "floor", "wall",
     "background", "shadow", "light", "reflection", "line", "circle", "c",
+    "hair", "head", "hairstyle", "skin", "neck", "ear", "eye", "nose", "mouth",
+    "torso", "chest", "shoulder", "body",
 }
 
 
@@ -495,16 +499,16 @@ def _watch_loop():
         if common == 0 and not catalog:
             continue                       # empty scene, nothing to do
 
-        time.sleep(0.3)                    # let the hand finish withdrawing
+        time.sleep(0.15)                   # let the hand finish withdrawing
         last_run, dropped = time.time(), last_count is not None and common < last_count
         last_count = common
         try:
-            _reconcile(dropped)
+            _reconcile(dropped, can_add=common > 0)
         except Exception as e:
             state["error"] = f"watch: {type(e).__name__}"[:120]
 
 
-def _reconcile(dropped):
+def _reconcile(dropped, can_add):
     """One Gemma call, then fold what it saw into the manifest."""
     with _lock:
         frame = None if _raw is None else _raw.copy()
@@ -538,6 +542,12 @@ def _reconcile(dropped):
             if item["status"] != "inside" and (dropped or item["misses"] >= 2):
                 item["status"] = "inside"
                 _log(f"{item['name']} went inside")
+
+    # Segmentation is the gatekeeper for new items. If it sees no shapes in the
+    # zone, nothing can have arrived, whatever Gemma thinks it read in the
+    # noise of an empty crop.
+    if not can_add:
+        return
 
     for name in set(seen.elements()):
         if len(catalog) >= MANIFEST_CAP or not _plausible(name):
