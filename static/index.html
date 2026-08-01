@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Absent</title>
+<style>
+  :root { --bg:#0a0c10; --panel:#141820; --line:#232937; --dim:#7a8699; --ok:#31d0a5; --bad:#ff4d5e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#e8edf5;
+         font:16px/1.5 -apple-system,Segoe UI,system-ui,sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:16px; }
+  h1 { margin:0; font-size:26px; letter-spacing:-0.02em; }
+  .tag { color:var(--dim); font-size:14px; }
+  .offline { margin-left:auto; color:var(--ok); font-size:13px;
+             border:1px solid var(--ok); border-radius:99px; padding:3px 12px; }
+  main { display:grid; grid-template-columns:1fr 380px; gap:20px; padding:20px 28px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  #feed { width:100%; border-radius:10px; border:1px solid var(--line); display:block; }
+  .panel { background:var(--panel); border:1px solid var(--line);
+           border-radius:10px; padding:18px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase;
+              letter-spacing:0.08em; color:var(--dim); font-weight:600; }
+  button { width:100%; padding:14px; margin-bottom:10px; border-radius:8px;
+           border:1px solid var(--line); background:#1d2431; color:#e8edf5;
+           font-size:16px; font-weight:600; cursor:pointer; }
+  button:hover:not(:disabled) { background:#273041; }
+  button:disabled { opacity:.4; cursor:default; }
+  #out { border-color:#3a2b33; }
+  ul { list-style:none; margin:0; padding:0; }
+  li { padding:7px 10px; border-radius:6px; background:#1b212c; margin-bottom:6px;
+       font-size:15px; }
+  li.missing { background:#2c1620; color:var(--bad); font-weight:600; }
+  .alert { border-color:var(--bad); }
+  .alert h2 { color:var(--bad); }
+  .empty { color:var(--dim); font-size:14px; }
+  .clear { color:var(--ok); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Absent</h1>
+  <span class="tag">Nothing left behind.</span>
+  <span class="offline">on-device &middot; no network</span>
+</header>
+
+<main>
+  <img id="feed" src="/feed" alt="instrument field">
+  <div>
+    <div class="panel">
+      <h2>Count</h2>
+      <button id="in">Count in</button>
+      <button id="out">Count out</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="panel">
+      <h2>Counted in</h2>
+      <ul id="list-in"><li class="empty">nothing counted yet</li></ul>
+    </div>
+    <div class="panel" id="result-panel" hidden>
+      <h2 id="result-title">Result</h2>
+      <ul id="list-out"></ul>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function render(s) {
+  const busy = s.busy;
+  ['in','out','reset'].forEach(b => $(b).disabled = busy);
+  $('in').textContent = busy ? 'Counting…' : 'Count in';
+
+  $('list-in').innerHTML = s.count_in.length
+    ? s.count_in.map(i => `<li>${i}</li>`).join('')
+    : '<li class="empty">nothing counted yet</li>';
+
+  const panel = $('result-panel');
+  if (s.stage !== 'counted_out') { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  if (s.missing.length) {
+    panel.classList.add('alert');
+    $('result-title').textContent = `${s.missing.length} unaccounted for`;
+    $('list-out').innerHTML =
+      s.missing.map(i => `<li class="missing">${i}</li>`).join('') +
+      s.present.map(i => `<li>${i}</li>`).join('');
+  } else {
+    panel.classList.remove('alert');
+    $('result-title').textContent = 'Count complete';
+    $('list-out').innerHTML = '<li class="clear">all items accounted for</li>';
+  }
+}
+
+async function post(path) {
+  ['in','out','reset'].forEach(b => $(b).disabled = true);
+  $('in').textContent = 'Counting…';
+  render(await (await fetch(path, {method:'POST'})).json());
+}
+
+$('in').onclick    = () => post('/count/in');
+$('out').onclick   = () => post('/count/out');
+$('reset').onclick = () => post('/reset');
+
+setInterval(async () => {
+  const s = await (await fetch('/state')).json();
+  if (!s.busy) render(s);
+}, 1000);
+</script>
+</body>
+</html>
