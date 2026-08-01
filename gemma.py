@@ -17,7 +17,10 @@ import requests
 OLLAMA = "http://localhost:11434/api/generate"
 MODEL = "gemma4:e2b-it-qat"
 SEED = 42
-TIMEOUT = 120
+# Connect fast so a dead Ollama fails in seconds, but allow a slow first read.
+TIMEOUT = (3, 40)
+
+_UNREADABLE = object()   # sentinel: a bad reply must raise, not fall back
 
 # Do not say "tray". Asked about a tray, E2B returns [] whenever it cannot see
 # a literal surgical tray, which is every frame of our demo.
@@ -68,10 +71,14 @@ def _parse(text, fallback):
     """Gemma usually returns clean JSON but sometimes wraps it in a fence."""
     match = re.search(r"[\[{].*[\]}]", text, re.S)
     if not match:
+        if fallback is _UNREADABLE:
+            raise ValueError("no JSON in Gemma's reply, count not performed")
         return fallback
     try:
         return json.loads(match.group(0))
     except json.JSONDecodeError:
+        if fallback is _UNREADABLE:
+            raise ValueError("malformed JSON from Gemma, count not performed")
         return fallback
 
 
@@ -100,7 +107,18 @@ def _match(name, items):
 def check_against(frame, items):
     """Ask which of `items` are gone. Returns (present, missing)."""
     listed = "\n".join(f"- {i}" for i in items)
-    result = _parse(_ask(CHECK_PROMPT.format(items=listed), frame), {})
+    # Never fall back silently here. An unreadable reply used to mean an empty
+    # dict, which reported every instrument unaccounted for: a red alarm on
+    # stage caused by a hiccup rather than by a missing instrument.
+    result = _parse(_ask(CHECK_PROMPT.format(items=listed), frame), _UNREADABLE)
+
+    # Gemma sometimes answers with a bare array instead of the two-key object.
+    # Read that as the present list. Without this the count throws, or worse,
+    # falls back to an empty dict and reports every instrument unaccounted for.
+    if isinstance(result, list):
+        result = {"present": result}
+    elif not isinstance(result, dict):
+        raise ValueError("unreadable reply from Gemma, count not performed")
 
     # Counted, not set-membership. Two clamps go in, one comes out, and a set
     # diff reports all clear while an instrument is still inside the patient.

@@ -2,163 +2,187 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Absent</title>
 <style>
-  :root { --bg:#0a0c10; --panel:#141820; --line:#232937; --dim:#7a8699; --ok:#31d0a5; --bad:#ff4d5e; }
+  :root { --bg:#07090d; --panel:#11151d; --line:#1e2531; --dim:#79859a;
+          --ok:#31d0a5; --bad:#ff4d5e; --warn:#ffc44d; --sidebar:330px; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:#e8edf5;
-         font:16px/1.5 -apple-system,Segoe UI,system-ui,sans-serif; }
-  header { padding:20px 28px; border-bottom:1px solid var(--line);
-           display:flex; align-items:baseline; gap:16px; }
-  h1 { margin:0; font-size:26px; letter-spacing:-0.02em; }
-  .tag { color:var(--dim); font-size:14px; }
-  .offline { margin-left:auto; color:var(--ok); font-size:13px;
-             border:1px solid var(--ok); border-radius:99px; padding:3px 12px; }
-  main { display:grid; grid-template-columns:1fr 380px; gap:20px; padding:20px 28px; }
-  @media (max-width:900px) { main { grid-template-columns:1fr; } }
-  /* A phone held upright sends a tall frame; cap it so the page never
-     turns into a ribbon you have to scroll. */
-  .stage { display:flex; align-items:flex-start; justify-content:center; }
-  #feed { max-width:100%; max-height:calc(100dvh - 170px); width:auto;
-          border-radius:10px; border:1px solid var(--line); display:block;
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:#e9eef6; overflow:hidden;
+         font:16px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;
+         display:grid; grid-template-columns:1fr var(--sidebar); }
+
+  /* video fills everything left of the sidebar, no page chrome at all */
+  .stage { position:relative; background:#000; overflow:hidden; }
+  #feed { width:100%; height:100%; object-fit:contain; display:block;
           cursor:crosshair; user-select:none; -webkit-user-drag:none; }
-  .draghint { color:var(--dim); font-size:13px; text-align:center; margin:10px 0 0; }
-  .panel { background:var(--panel); border:1px solid var(--line);
-           border-radius:10px; padding:18px; margin-bottom:16px; }
-  .panel h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase;
-              letter-spacing:0.08em; color:var(--dim); font-weight:600; }
-  button { width:100%; padding:14px; margin-bottom:10px; border-radius:8px;
-           border:1px solid var(--line); background:#1d2431; color:#e8edf5;
-           font-size:16px; font-weight:600; cursor:pointer; }
-  button:hover:not(:disabled) { background:#273041; }
-  button:disabled { opacity:.4; cursor:default; }
-  #out { border-color:#3a2b33; }
-  ul { list-style:none; margin:0; padding:0; }
-  li { padding:7px 10px; border-radius:6px; background:#1b212c; margin-bottom:6px;
-       font-size:15px; }
-  li.missing { background:#2c1620; color:var(--bad); font-weight:600; }
-  .alert { border-color:var(--bad); }
-  .alert h2 { color:var(--bad); }
-  .empty { color:var(--dim); font-size:14px; }
-  .clear { color:var(--ok); font-weight:600; }
-  .cross { font-size:13px; color:var(--dim); margin-bottom:10px; }
-  .cross.disagree { color:#ffc44d; }
-  .stamp { color:var(--dim); font-size:12px; margin-top:10px; }
+
+  .wordmark { position:absolute; top:18px; right:22px; text-align:right;
+              text-shadow:0 2px 14px rgba(0,0,0,.9); pointer-events:none; }
+  .wordmark b { font-size:22px; letter-spacing:-0.02em; display:block; }
+  .wordmark span { font-size:12px; color:var(--ok); }
+
+  .controls { position:absolute; left:22px; bottom:22px; display:flex; gap:10px;
+              align-items:center; flex-wrap:wrap; }
+  button { padding:13px 20px; border-radius:9px; border:1px solid var(--line);
+           background:rgba(20,25,34,.92); color:#e9eef6; font-size:15px;
+           font-weight:600; cursor:pointer; backdrop-filter:blur(6px); }
+  button:hover:not(:disabled) { background:rgba(38,46,62,.95); }
+  button:disabled { opacity:.45; cursor:default; }
+  #add { background:var(--ok); border-color:var(--ok); color:#04231b; }
+  #verify { background:#2a2130; border-color:#4a3550; }
+  #msg { position:absolute; left:22px; bottom:74px; font-size:13px;
+         color:var(--dim); text-shadow:0 2px 10px #000; }
+
+  /* sidebar: the manifest, one card per instrument */
+  aside { background:var(--panel); border-left:1px solid var(--line);
+          display:flex; flex-direction:column; min-height:0; }
+  .head { padding:16px 18px 12px; border-bottom:1px solid var(--line); }
+  .head h2 { margin:0; font-size:12px; letter-spacing:.09em; color:var(--dim);
+             text-transform:uppercase; }
+  .head .n { font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  .head .sub { font-size:12px; color:var(--dim); }
+  .head .sub.disagree { color:var(--warn); }
+
+  .cards { flex:1; overflow-y:auto; padding:14px; display:flex;
+           flex-direction:column; gap:12px; min-height:0; }
+  .card { background:#161b25; border:1px solid var(--line); border-radius:10px;
+          overflow:hidden; display:flex; gap:12px; align-items:center; }
+  .card img { width:88px; height:88px; object-fit:cover; background:#000;
+              flex:none; }
+  .card .meta { padding:8px 10px 8px 0; min-width:0; }
+  .card .name { font-weight:650; font-size:15px; text-transform:capitalize;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .status { font-size:12px; color:var(--dim); }
+  .card.gone { border-color:var(--bad); background:#25131a; }
+  .card.gone .status { color:var(--bad); font-weight:650; }
+  .card.ok .status { color:var(--ok); }
+  .none { color:var(--dim); font-size:14px; padding:6px 4px; }
+
+  .banner { padding:14px 18px; font-weight:650; font-size:15px;
+            border-top:1px solid var(--line); }
+  .banner.bad { background:#2b1119; color:var(--bad); }
+  .banner.good { background:#0d251e; color:var(--ok); }
 </style>
 </head>
 <body>
-<header>
-  <h1>Absent</h1>
-  <span class="tag">Nothing left behind.</span>
-  <span class="offline">on-device &middot; no network</span>
-</header>
 
-<main>
-  <div>
-    <div class="stage"><img id="feed" src="/feed" alt="instrument field"></div>
-    <p class="draghint">Drag on the video to set the count zone.</p>
+<div class="stage">
+  <img id="feed" src="/feed" alt="instrument field">
+  <div class="wordmark"><b>Absent</b><span>on-device &middot; no network</span></div>
+  <div id="msg">Drag on the video to set the count zone</div>
+  <div class="controls">
+    <button id="add">Add item</button>
+    <button id="verify">Count</button>
+    <button id="clear">Reset</button>
   </div>
-  <div>
-    <div class="panel">
-      <h2>Count</h2>
-      <button id="in">Count in</button>
-      <button id="out">Count out</button>
-      <button id="reset">Reset</button>
-    </div>
-    <div class="panel">
-      <h2>Counted in</h2>
-      <div id="crosscheck" class="cross" hidden></div>
-      <ul id="list-in"><li class="empty">nothing counted yet</li></ul>
-    </div>
-    <div class="panel" id="result-panel" hidden>
-      <h2 id="result-title">Result</h2>
-      <ul id="list-out"></ul>
-    </div>
+</div>
+
+<aside>
+  <div class="head">
+    <h2>Manifest</h2>
+    <div class="n" id="count">0 items</div>
+    <div class="sub" id="cross"></div>
   </div>
-</main>
+  <div class="cards" id="cards">
+    <div class="none">Hold an instrument up to the camera and press Add.</div>
+  </div>
+  <div class="banner" id="banner" hidden></div>
+</aside>
 
 <script>
 const $ = id => document.getElementById(id);
+const busy = on => ['add','verify','clear'].forEach(b => $(b).disabled = on);
 
-function render(s) {
-  const busy = s.busy;
-  ['in','out','reset'].forEach(b => $(b).disabled = busy);
-  $('in').textContent = busy ? 'Counting…' : 'Count in';
+function render(items, state) {
+  $('count').textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
+  $('cards').innerHTML = items.length ? items.map(i => `
+    <div class="card ${i.status === 'unaccounted for' ? 'gone'
+                     : i.status === 'accounted for' ? 'ok' : ''}">
+      <img src="${i.file}" alt="${i.name}">
+      <div class="meta">
+        <div class="name">${i.name}</div>
+        <div class="status">${i.status} &middot; ${i.at}</div>
+      </div>
+    </div>`).join('')
+    : '<div class="none">Hold an instrument up to the camera and press Add.</div>';
 
-  $('list-in').innerHTML = s.count_in.length
-    ? s.count_in.map(i => `<li>${i}</li>`).join('')
-    : '<li class="empty">nothing counted yet</li>';
+  const gone = items.filter(i => i.status === 'unaccounted for');
+  const banner = $('banner');
+  banner.hidden = !items.length || items.every(i => i.status === 'counted in');
+  banner.className = 'banner ' + (gone.length ? 'bad' : 'good');
+  banner.textContent = gone.length
+    ? `${gone.length} unaccounted for: ${gone.map(i => i.name).join(', ')}`
+    : 'All items accounted for';
 
-  // Gemma names, FastSAM counts shapes. They fail differently, so say when
-  // they disagree instead of quietly trusting one of them.
-  const cross = $('crosscheck');
-  cross.hidden = s.stage === 'idle';
-  if (!cross.hidden) {
-    const gap = s.segmented - s.named;
-    cross.className = 'cross' + (Math.abs(gap) > 1 ? ' disagree' : '');
-    cross.textContent = `Gemma named ${s.named} · segmentation saw ${s.segmented}`
-      + (Math.abs(gap) > 1 ? ' · check the zone' : '')
-      + (s.at_in ? ` · counted in ${s.at_in}` : '');
-  }
-
-  const panel = $('result-panel');
-  if (s.stage !== 'counted_out') { panel.hidden = true; return; }
-  panel.hidden = false;
-
-  if (s.missing.length) {
-    panel.classList.add('alert');
-    $('result-title').textContent = `${s.missing.length} unaccounted for`;
-    $('list-out').innerHTML =
-      s.missing.map(i => `<li class="missing">${i}</li>`).join('') +
-      s.present.map(i => `<li>${i}</li>`).join('');
+  // Two independent signals: Gemma names, segmentation counts shapes.
+  const cross = $('cross');
+  if (state && state.stage === 'counted_out') {
+    const gap = Math.abs(state.segmented - state.named);
+    cross.className = 'sub' + (gap > 1 ? ' disagree' : '');
+    cross.textContent = `named ${state.named} · segmentation saw ${state.segmented}`
+                      + (state.at_out ? ` · ${state.at_out}` : '');
   } else {
-    panel.classList.remove('alert');
-    $('result-title').textContent = 'Count complete';
-    $('list-out').innerHTML = '<li class="clear">all items accounted for</li>';
+    cross.className = 'sub';
+    cross.textContent = 'nothing counted yet';
   }
 }
 
-async function post(path) {
-  ['in','out','reset'].forEach(b => $(b).disabled = true);
-  $('in').textContent = 'Counting…';
-  render(await (await fetch(path, {method:'POST'})).json());
+async function refresh() {
+  const [items, state] = await Promise.all([
+    (await fetch('/catalog/items')).json(),
+    (await fetch('/state')).json()]);
+  render(items, state);
 }
 
-// Drag anywhere on the video to redraw the count zone. Fractions, so it stays
-// correct whatever resolution the phone or webcam happens to be sending.
+$('add').onclick = async () => {
+  busy(true); $('msg').textContent = 'naming and segmenting…';
+  const r = await (await fetch('/catalog/add', {method:'POST'})).json();
+  $('msg').textContent = r.ok ? `added ${r.item.name}` : r.error;
+  await refresh(); busy(false);
+};
+
+$('verify').onclick = async () => {
+  busy(true); $('msg').textContent = 'counting…';
+  const r = await (await fetch('/verify', {method:'POST'})).json();
+  const st = await (await fetch('/state')).json();
+  $('msg').textContent = r.ok ? 'count complete'
+                              : (st.error || r.error || 'count failed');
+  await refresh(); busy(false);
+};
+
+$('clear').onclick = async () => {
+  busy(true);
+  await fetch('/catalog/clear', {method:'POST'});
+  $('msg').textContent = 'cleared';
+  await refresh(); busy(false);
+};
+
+// Drag anywhere on the video to redraw the count zone. Stored as fractions so
+// it stays correct whatever resolution the phone or webcam is sending.
 const feed = $('feed');
 let anchor = null;
-
 const at = e => {
   const r = feed.getBoundingClientRect();
   return {x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height};
 };
-
 feed.addEventListener('pointerdown', e => {
-  anchor = at(e);
-  feed.setPointerCapture(e.pointerId);
-  e.preventDefault();
+  anchor = at(e); feed.setPointerCapture(e.pointerId); e.preventDefault();
 });
-
 feed.addEventListener('pointerup', async e => {
   if (!anchor) return;
-  const b = at(e), a = anchor;
-  anchor = null;
+  const b = at(e), a = anchor; anchor = null;
   const zone = {x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
                 w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y)};
-  if (zone.w < 0.04 || zone.h < 0.04) return;   // a click, not a drag
+  if (zone.w < 0.04 || zone.h < 0.04) return;
   await fetch('/zone', {method:'POST', headers:{'Content-Type':'application/json'},
                         body: JSON.stringify(zone)});
+  $('msg').textContent = 'count zone set';
 });
 
-$('in').onclick    = () => post('/count/in');
-$('out').onclick   = () => post('/count/out');
-$('reset').onclick = () => post('/reset');
-
-setInterval(async () => {
-  const s = await (await fetch('/state')).json();
-  if (!s.busy) render(s);
-}, 1000);
+refresh();
+setInterval(() => { if (!$('add').disabled) refresh(); }, 2000);
 </script>
 </body>
 </html>

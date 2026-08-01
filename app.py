@@ -9,6 +9,7 @@ fires on a count event, which is also how real surgical counts work.
 import os
 import re
 import threading
+from collections import Counter
 import time
 from datetime import datetime
 from pathlib import Path
@@ -199,8 +200,12 @@ def _capture_loop():
     current = state["camera"]
     cam = _open(current)
     last = time.time()
+    misses = 0
 
     while True:
+      # One unhandled throw in here used to kill the thread while /feed kept
+      # serving the last frame forever, so a dead camera looked alive.
+      try:
         # A phone posting frames takes over; if it stops for 3s we fall back
         # to the webcam so the demo can never end up on a frozen picture.
         with _lock:
@@ -216,8 +221,15 @@ def _capture_loop():
                 cam = _open(current)
             ok, frame = cam.read()
             if not ok:
+                # Unplugging the camera, or another app grabbing it, used to
+                # spin here forever. Reopen instead, so replugging recovers.
+                misses += 1
+                if misses % 40 == 0:
+                    cam.release()
+                    cam = _open(current)
                 time.sleep(0.05)
                 continue
+            misses = 0
         result = model.predict(frame, imgsz=SEG_SIZE, conf=CONF, verbose=False)[0]
         masks = _instrument_masks(result, frame.shape)
         now = time.time()
@@ -228,6 +240,9 @@ def _capture_loop():
             _masks = masks
             _annotated = _overlay(frame, masks)
             state["tracking"] = len(masks)
+      except Exception as e:
+        state["error"] = f"camera: {type(e).__name__}"
+        time.sleep(0.2)
 
 
 def _snapshot(tag):
@@ -326,8 +341,11 @@ def identify():
         return {"name": "no camera frame yet"}
     x1, y1, x2, y2 = _roi(frame.shape)
     started = time.time()
-    return {"name": gemma.identify_held(frame[y1:y2, x1:x2]),
-            "seconds": round(time.time() - started, 1)}
+    try:
+        name = gemma.identify_held(frame[y1:y2, x1:x2])
+    except Exception as e:                      # a 500 leaves the button dead
+        name = f"gemma unavailable ({type(e).__name__})"
+    return {"name": name, "seconds": round(time.time() - started, 1)}
 
 
 def _held_mask(masks, shape):
@@ -396,16 +414,46 @@ def catalog_add():
     cv2.imwrite(str(CATALOG / fname), thumb)
 
     entry = {"name": name, "file": f"/static/catalog/{fname}",
-             "at": datetime.now().strftime("%H:%M:%S"), "segmented": mask is not None}
+             "at": datetime.now().strftime("%H:%M:%S"), "segmented": mask is not None,
+             "status": "counted in"}
     catalog.append(entry)
     return {"ok": True, "item": entry, "count": len(catalog)}
+
+
+@app.post("/verify")
+def verify():
+    """Check the manifest against what the camera can see right now. Anything
+    catalogued but no longer visible is unaccounted for."""
+    if not catalog:
+        return {"ok": False, "error": "catalog an item first"}
+    state["busy"] = True
+    try:
+        names = [i["name"] for i in catalog]
+        state["error"] = ""
+        present, missing = gemma.check_against(_snapshot("verify"), names)
+        outstanding = Counter(missing)
+        for item in catalog:
+            gone = outstanding[item["name"]] > 0
+            if gone:
+                outstanding[item["name"]] -= 1
+            item["status"] = "unaccounted for" if gone else "accounted for"
+        state.update(stage="counted_out", count_in=names, present=present,
+                     missing=missing, error="", named=len(names),
+                     segmented=state["tracking"],
+                     at_out=datetime.now().strftime("%H:%M:%S"))
+    except Exception as e:
+        state["error"] = f"{type(e).__name__}: {e}"[:120]
+    finally:
+        state["busy"] = False
+    return {"ok": not state["error"], "items": catalog, "missing": state["missing"]}
 
 
 @app.post("/catalog/clear")
 def catalog_clear():
     catalog.clear()
     for f in CATALOG.glob("*.jpg"):
-        f.unlink()
+        f.unlink(missing_ok=True)
+    reset()
     return {"ok": True}
 
 
@@ -419,9 +467,19 @@ async def ingest(request: Request):
     """Frames posted by the phone's browser over the USB cable."""
     global _phone, _phone_seen
     data = await request.body()
+    if not data:
+        return {"ok": False, "error": "empty body"}   # imdecode raises on b""
     frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
-        return {"ok": False}
+        # HEIC, the iPhone's default photo format, lands here.
+        return {"ok": False, "error": "unsupported image format, use JPEG"}
+
+    # The live stream caps its own size, the photo picker does not. A 12 MP
+    # still would put ~1.5 s of overlay work inside the capture lock.
+    big = max(frame.shape[:2])
+    if big > 1280:
+        s = 1280 / big
+        frame = cv2.resize(frame, (int(frame.shape[1] * s), int(frame.shape[0] * s)))
     with _lock:
         _phone = frame
         _phone_seen = time.time()
